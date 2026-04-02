@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 	"github.com/tuneinsight/lattigo/v6/ring"
@@ -11,12 +12,15 @@ import (
 // randomWeightVector returns a random integer vector w of length n such that:
 // - each w[i] is in [0, n]
 // - sum_i w[i] = n
-func randomWeightVector(n int) []uint64 {
+// After finding this vector it transforms it in a n x b vector where we repeat b each element in this form
+// (w1, w1, ..., w1, w2, w2, ..., w2, ..., wn, wn, ..., wn)
+func randomWeightVector(n, b int) []uint64 {
 	assert(n >= 0, "n must be >= 0")
+	assert(b > 0, "b must be > 0")
 
 	w := make([]uint64, n)
 	if n == 0 {
-		return w
+		return make([]uint64, 0)
 	}
 
 	upper := uint64(n)
@@ -25,56 +29,59 @@ func randomWeightVector(n int) []uint64 {
 		w[int(idx)]++
 	}
 
-	return w
+	expanded := make([]uint64, n*b)
+	pos := 0
+	for i := 0; i < n; i++ {
+		for j := 0; j < b; j++ {
+			expanded[pos] = w[i]
+			pos++
+		}
+	}
+
+	return expanded
 }
 
-// randomVPackedVector returns a vector v of length N where each slot is B^a
-// and a is sampled uniformly at random from [0, b).
-func randomVPackedVector(N, b, B int) []uint64 {
-	assert(N >= 0, "N must be >= 0")
+// randomVoting vector represents a n x b matrix in 1 vector where each row contains
+// only one entry equal to 1 and this entry is random on every row
+func randomVotingVector(n, b int) []uint64 {
+	assert(n >= 0, "n must be >= 0")
 	assert(b > 0, "b must be > 0")
-	assert(B >= 0, "B must be >= 0")
 
-	v := make([]uint64, N)
-
-	for i := 0; i < N; i++ {
-		a := int(randUint64n(uint64(b)))
-		v[i] = powUint64(uint64(B), a)
+	v := make([]uint64, n*b)
+	for i := 0; i < n; i++ {
+		col := int(randUint64n(uint64(b)))
+		v[i*b+col] = 1
 	}
 
 	return v
 }
 
+// weightedRowSumPlain computes column sums of the element-wise product of two
+// flattened n x b matrices (row-major layout).
+func weightedRowSumPlain(wFlat, vFlat []uint64, n, b int) []uint64 {
+	assert(n >= 0, "n must be >= 0")
+	assert(b > 0, "b must be > 0")
+	assert(len(wFlat) == n*b, "len(wFlat) must be n*b")
+	assert(len(vFlat) == n*b, "len(vFlat) must be n*b")
 
-// extractBaseDigits returns exactly numDigits digits in base B, least-significant first.
-// Returned digits correspond to coefficients of [B^0, B^1, ..., B^(numDigits-1)].
-func extractBaseDigits(x uint64, B, numDigits int) []uint64 {
-	assert(B >= 2, "B must be >= 2")
-	assert(numDigits >= 0, "numDigits must be >= 0")
-
-	digits := make([]uint64, numDigits)
-	base := uint64(B)
-	n := x
-	for i := 0; i < numDigits; i++ {
-		digits[i] = n % base
-		n /= base
+	out := make([]uint64, b)
+	for i := 0; i < n; i++ {
+		rowOffset := i * b
+		for c := 0; c < b; c++ {
+			out[c] += wFlat[rowOffset+c] * vFlat[rowOffset+c]
+		}
 	}
-
-	return digits
+	return out
 }
 
 func main() {
 	// 1. Initialization
-	n := 5 // number of voters
-	b := 2 // number of candidates
-	B := n + 1
-	w := randomWeightVector(n)                   // weight vector representing the voting power per voter
-	vPacked := randomVPackedVector(n, b, B)      // the voting vector representing each vote in base B
-	innerPlain := innerProductUint64(w, vPacked) // the final tally representation done in plain
+	n := 65_536                  // number of voters
+	b := 20                       // number of candidates
+	w := randomWeightVector(n, b) // weight vector representing the voting power per voter
+	v := randomVotingVector(n, b) // voting vector packed as an n x b row-major vector
 
-	fmt.Println("w =", w)
-	fmt.Println("vPacked =", vPacked)
-	fmt.Println("plain inner(w, vPacked) =", innerPlain)
+	plainTotals := weightedRowSumPlain(w, v, n, b)
 
 	// 2. Encryption
 	// 2.1 Encryption parameters
@@ -103,11 +110,56 @@ func main() {
 	}
 
 	// 2.2 Build BFV crypto context
-	params := must1(bgv.NewParametersFromLiteral(paramsLiteral))
+	rlweLiteral := paramsLiteral.GetRLWEParametersLiteral()
+	rlweLiteral.RingType = ring.Standard
+	rlweParams := must1(rlwe.NewParametersFromLiteral(rlweLiteral))
+	params := must1(bgv.NewParameters(rlweParams, paramsLiteral.PlaintextModulus))
 	kgen := bgv.NewKeyGenerator(params)
 	sk, pk := kgen.GenKeyPairNew()
+	fmt.Println("Plaintext modulus =", params.PlaintextModulus())
+	fmt.Println("Ring type =", params.RingType())
+	fmt.Println("Slots =", params.MaxSlots())
+	fmt.Println("Dimensions =", params.MaxDimensions())
 
-	// Evaluation key parameters are tunable as well.
+	encoder := bgv.NewEncoder(params)
+	encryptor := bgv.NewEncryptor(params, pk)
+
+	// Divide v in n_ciphetexts vector, each containing n_voters_per_ciphertext voters (except maybe the last one) and encrypt each of them separately
+	nRowsPerCiphertext := params.MaxDimensions().Rows
+	nColumnsPerCiphertext := params.MaxDimensions().Cols
+	nVotersPerRow := int(math.Floor(float64(params.MaxDimensions().Cols) / float64(b)))
+	nVotersPerCiphertext := nRowsPerCiphertext * nVotersPerRow
+	nRows := int(math.Ceil(float64(n) / float64(nVotersPerRow)))
+	nCiphertext := int(math.Ceil(float64(nRows) / float64(nRowsPerCiphertext)))
+
+	fmt.Println("nCiphertext =", nCiphertext)
+
+	vCiphertexts := make([]*rlwe.Ciphertext, nCiphertext)
+	wCiphertexts := make([]*rlwe.Ciphertext, nCiphertext)
+	for i := range nCiphertext {
+		vContent := make([]uint64, params.MaxSlots())
+		wContent := make([]uint64, params.MaxSlots())
+		for j := range nRowsPerCiphertext {
+			startCipher := j * nColumnsPerCiphertext
+			endCipher := startCipher + nColumnsPerCiphertext
+			start:= i * nVotersPerCiphertext * b + j * nVotersPerRow * b
+			end := min(start + nVotersPerRow*b, len(v))
+			if end < start {
+				break
+			}
+			copy(vContent[startCipher:endCipher], v[start:end])
+			copy(wContent[startCipher:endCipher], w[start:end])
+		}
+		ptV := bgv.NewPlaintext(params, params.MaxLevel())
+		ptW := bgv.NewPlaintext(params, params.MaxLevel())
+		must(encoder.Encode(vContent, ptV))
+		must(encoder.Encode(wContent, ptW))
+		vCiphertexts[i] = must1(encryptor.EncryptNew(ptV))
+		wCiphertexts[i] = must1(encryptor.EncryptNew(ptW))
+	}
+
+	// Multiply w ciphertexts and v ciphertexts together
+	// NOTE: We can add parameters to evaluation keys, scaleInvariant = true -> BFV
 	evkParams := rlwe.EvaluationKeyParameters{
 		LevelQ:               nil,   // nil => params.MaxLevelQ()
 		LevelP:               nil,   // nil => params.MaxLevelP()
@@ -115,48 +167,37 @@ func main() {
 		Compressed:           false, // true => smaller key, needs expansion before use
 	}
 	rlk := kgen.GenRelinearizationKeyNew(sk, evkParams)
-	galEls := params.GaloisElementsForInnerSum(1, n)
+	galEls := rlwe.GaloisElementsForInnerSum(params, b, nVotersPerRow)
+	galEls = append(galEls, params.GaloisElementForRowRotation())
 	gks := kgen.GenGaloisKeysNew(galEls, sk, evkParams)
 	evk := rlwe.NewMemEvaluationKeySet(rlk, gks...)
-
-	encoder := bgv.NewEncoder(params)
-	encryptor := bgv.NewEncryptor(params, pk)
-	decryptor := bgv.NewDecryptor(params, sk)
-	// BFV mode in Lattigo is BGV evaluator with scaleInvariant=true.
 	evaluator := bgv.NewEvaluator(params, evk, true)
 
-	// 3. Homomorphic inner product <w, vPacked>
-	// TODO: Add the simulation of the mult. depth of vpacked and w after the precomputation of prior steps
-	assert(n <= params.MaxSlots(), "n must be <= params.MaxSlots()")
+	assert(nCiphertext > 0, "nCiphertext must be > 0")
+	ctAcc := must1(evaluator.MulRelinNew(wCiphertexts[0], vCiphertexts[0]))
+	for i := 1; i < nCiphertext; i++ {
+		ctPart := must1(evaluator.MulRelinNew(wCiphertexts[i], vCiphertexts[i]))
+		must(evaluator.Add(ctAcc, ctPart, ctAcc))
+	}
 
-	ptW := bgv.NewPlaintext(params, params.MaxLevel())
-	ptV := bgv.NewPlaintext(params, params.MaxLevel())
-	must(encoder.Encode(w, ptW))
-	must(encoder.Encode(vPacked, ptV))
+	ctResult2Row := ctAcc.CopyNew()
+	must(evaluator.RotateAndAdd(ctAcc, b, nVotersPerRow, ctResult2Row))
 
-	ctW := must1(encryptor.EncryptNew(ptW))
-	ctV := must1(encryptor.EncryptNew(ptV))
+	ctSwap := must1(evaluator.RotateRowsNew(ctResult2Row))
+	ctResult := must1(evaluator.AddNew(ctResult2Row, ctSwap))
 
-	// Slot-wise multiplication.
-	ctMul := must1(evaluator.MulRelinNew(ctW, ctV))
+	decryptor := bgv.NewDecryptor(params, sk)
+	ptResult := decryptor.DecryptNew(ctResult)
+	decodeResult := make([]uint64, params.MaxSlots())
+	must(encoder.Decode(ptResult, decodeResult))
 
-	// Sum first n slots into slot 0.
-	ctInner := ctMul.CopyNew()
-	must(evaluator.RotateAndAdd(ctMul, 1, n, ctInner))
+	fmt.Println("plain computed result =", plainTotals)
+	fmt.Println("decrypted computed result =", decodeResult[:b])
+	fmt.Println("decrypted computed result =", decodeResult[nColumnsPerCiphertext:b + nColumnsPerCiphertext])
+	for i := 0; i < b; i++ {
+		assert(plainTotals[i] == decodeResult[i], fmt.Sprintf("Mismatch at index %d: expected %d, got %d", i, plainTotals[i], decodeResult[i]))
+	}
 
-	ptInner := decryptor.DecryptNew(ctInner)
-	decoded := make([]uint64, params.MaxSlots())
-	must(encoder.Decode(ptInner, decoded))
-	innerHE := decoded[0]
-
-	innerPlainModT := innerPlain % params.PlaintextModulus()
-
-	decodedPlainDigits := extractBaseDigits(innerPlainModT, B, b)
-	decodedHEDigits := extractBaseDigits(innerHE, B, b)
-
-	fmt.Println("plain inner mod t =", innerPlainModT)
-	fmt.Println("HE inner (slot 0) =", innerHE)
-	assert(innerHE == innerPlainModT, "HE inner product mismatch")
-	fmt.Println("decoded tally from plain inner =", decodedPlainDigits)
-	fmt.Println("decoded tally from HE inner =", decodedHEDigits)
 }
+
+// TODO: Add the simulation of the mult. depth of vpacked and w after the precomputation of prior steps
