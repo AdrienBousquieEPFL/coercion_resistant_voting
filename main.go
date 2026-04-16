@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	bgvpoly "github.com/tuneinsight/lattigo/v6/circuits/bgv/polynomial"
 	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 	"github.com/tuneinsight/lattigo/v6/ring"
 	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
@@ -10,10 +11,13 @@ import (
 
 func main() {
 	// 1. Initialization
-	n := 65_536                   // number of voters
-	b := 20                       // number of candidates
-	w := randomWeightVector(n, b) // weight vector representing the voting power per voter
-	t := randomVotingVector(n, b) // voting vector packed as an n x b row-major vector
+	n := 3                           // number of voters
+	b := 2                           // number of candidates
+	T := 9                           // number of periods (always odd)
+	w := randomWeightVector(n, b)    // weight vector representing the voting power per voter
+	t := randomVotingVector(n, b, T) // voting vector packed as an n x b row-major vector
+	fmt.Println("Voter vector", t)
+	fmt.Println("Weight vector", w)
 
 	// 2. BGV setup and encryption
 	// Edit these values to experiment with BGV settings.
@@ -90,6 +94,7 @@ func main() {
 	}
 
 	// 3. Homomorphic computation.
+	// 3.1 - Parameters
 	evkParams := rlwe.EvaluationKeyParameters{
 		LevelQ:               nil,   // nil => params.MaxLevelQ()
 		LevelP:               nil,   // nil => params.MaxLevelP()
@@ -102,7 +107,15 @@ func main() {
 	gks := kgen.GenGaloisKeysNew(galEls, sk, evkParams)
 	evk := rlwe.NewMemEvaluationKeySet(rlk, gks...)
 	evaluator := bgv.NewEvaluator(params, evk, true)
+	polyEval := bgvpoly.NewEvaluator(params, evaluator)
 
+	// 3.2 - Lagrange interpolation I(x > T/2)
+	indicatorCoeffs := lagrangeIndicatorCoefficients(T, params.PlaintextModulus())
+	for i, ct := range tCiphertexts {
+		tCiphertexts[i] = must1(polyEval.Evaluate(ct, bgvpoly.NewPolynomial(indicatorCoeffs), params.DefaultScale()))
+	}
+
+	// 3.3 - Product of t and w
 	assert(layout.ciphertextCount > 0, "ciphertextCount must be > 0")
 	ctAcc := must1(evaluator.MulRelinNew(wCiphertexts[0], tCiphertexts[0]))
 	for i := 1; i < layout.ciphertextCount; i++ {
@@ -127,7 +140,7 @@ func main() {
 	finalTally := decoded[:b]
 	fmt.Println("decrypted computed result =", finalTally)
 
-	plainTotals := weightedRowSumPlain(w, t, n, b)
+	plainTotals := weightedRowMaskSumPlain(w, t, n, b, T)
 	fmt.Println("plain computed result =", plainTotals)
 	for i := range b {
 		assert(plainTotals[i] == finalTally[i], fmt.Sprintf("Mismatch at index %d: expected %d, got %d", i, plainTotals[i], finalTally[i]))
