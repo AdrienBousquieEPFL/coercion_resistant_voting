@@ -38,57 +38,88 @@ func randUint64n(n uint64) uint64 {
 	}
 }
 
-// randomWeightVector samples one weight per voter, then repeats each weight b times
-// to obtain a flattened n x b row-major matrix.
-func randomWeightVector(n, b int) []uint64 {
+// randomDelegationMatrix returns an n x k one-hot matrix.
+// This is a mapping from a delegate index to a voter index where it's a one-to-one function
+func randomDelegationMatrix(n, k int) [][]uint64 {
 	assert(n >= 0, "n must be >= 0")
-	assert(b > 0, "b must be > 0")
+	assert(k > 0, "k must be > 0")
+	assert(k < n, "k must be < n")
 
-	w := make([]uint64, n)
-	if n == 0 {
-		return make([]uint64, 0)
-	}
-
-	upper := uint64(n)
-	for k := 0; k < n; k++ {
-		idx := randUint64n(upper)
-		w[int(idx)]++
-	}
-
-	expanded := make([]uint64, n*b)
-	pos := 0
+	d := make([][]uint64, n)
 	for i := 0; i < n; i++ {
-		for j := 0; j < b; j++ {
-			expanded[pos] = w[i]
-			pos++
+		d[i] = make([]uint64, k)
+	}
+
+	perm := make([]int, n)
+	for i := 0; i < n; i++ {
+		perm[i] = i
+	}
+
+	for i := 0; i < k; i++ {
+		j := i + int(randUint64n(uint64(n-i)))
+		perm[i], perm[j] = perm[j], perm[i]
+		voterIdx := perm[i]
+		d[voterIdx][i] = 1
+	}
+
+	return d
+}
+
+// randomDelegationVector returns a flattened row-major matrix where each row
+// sums to a value in [0, T]. Each row independently has probability 1/2 of
+// containing one entry > floor(T/2), so the expected number of selected rows is
+// rowCount/2 after applying I(x > floor(T/2)).
+func randomDelegationVector(rowCount, colCount, T int) []uint64 {
+	assert(rowCount >= 0, "rowCount must be >= 0")
+	assert(colCount > 0, "colCount must be > 0")
+	assert(T >= 0, "T must be >= 0")
+
+	v := make([]uint64, rowCount*colCount)
+	threshold := T / 2
+	for i := range rowCount {
+		rowOffset := i * colCount
+
+		if T > 0 && randUint64n(2) == 1 {
+			majorityCol := int(randUint64n(uint64(colCount)))
+			majorityValue := threshold + 1 + int(randUint64n(uint64(T-threshold)))
+			v[rowOffset+majorityCol] = uint64(majorityValue)
+
+			remaining := int(randUint64n(uint64(T - majorityValue + 1)))
+			for j := 0; j < remaining; j++ {
+				col := int(randUint64n(uint64(colCount)))
+				v[rowOffset+col]++
+			}
+			continue
+		}
+
+		rowTotal := int(randUint64n(uint64(threshold + 1)))
+		for j := 0; j < rowTotal; j++ {
+			col := int(randUint64n(uint64(colCount)))
+			v[rowOffset+col]++
 		}
 	}
 
-	return expanded
+	return v
 }
 
-// randomVotingVector returns a flattened n x b row-major matrix
-// each row should sum up to a given value p (number of periods)
-// one value in the row HAS to be above or equal ceil(p/2)
-func randomVotingVector(n, b, T int) []uint64 {
-	assert(n >= 0, "n must be >= 0")
-	assert(b > 0, "b must be > 0")
-	assert(T > 0, "p must be > 0")
+// randomVotingVector returns a flattened row-major matrix where each
+// row sums to T and has one randomly chosen entry >= ceil(T/2).
+func randomVotingVector(rowCount, colCount, T int) []uint64 {
+	assert(rowCount >= 0, "rowCount must be >= 0")
+	assert(colCount > 0, "colCount must be > 0")
+	assert(T > 0, "T must be > 0")
 
-	v := make([]uint64, n*b)
+	v := make([]uint64, rowCount*colCount)
 	threshold := ceilDiv(T, 2)
 
-	for i := range n {
-		// Pick a random column to have the majority
-		majorityCol := int(randUint64n(uint64(b)))
-		// Give it at least ceil(p/2) votes to ensure it's >= threshold
-		v[i*b+majorityCol] = uint64(threshold)
+	for i := range rowCount {
+		majorityCol := int(randUint64n(uint64(colCount)))
+		v[i*colCount+majorityCol] = uint64(threshold)
 
-		// Distribute the remaining votes randomly among all columns
 		remaining := T - threshold
 		for j := 0; j < remaining; j++ {
-			col := int(randUint64n(uint64(b)))
-			v[i*b+col]++
+			col := int(randUint64n(uint64(colCount)))
+			v[i*colCount+col]++
 		}
 	}
 
