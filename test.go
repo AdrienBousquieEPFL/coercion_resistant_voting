@@ -1,0 +1,233 @@
+package main
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
+)
+
+func indicatorVectorPlain(values []uint64, T int) []uint64 {
+	assert(T > 0, "T must be > 0")
+
+	out := make([]uint64, len(values))
+	threshold := uint64(T / 2)
+	for i, value := range values {
+		if value > threshold {
+			out[i] = 1
+		}
+	}
+
+	return out
+}
+
+func delegationIndicatorPlain(wFlat []uint64, n, k, T int) []uint64 {
+	assert(n >= 0, "n must be >= 0")
+	assert(k > 0, "k must be > 0")
+	assert(T > 0, "T must be > 0")
+	assert(len(wFlat) == n*k, "len(wFlat) must be n*k")
+
+	out := make([]uint64, n)
+	threshold := uint64(T / 2)
+	for i := 0; i < n; i++ {
+		rowOffset := i * k
+		var rowSum uint64
+		for l := 0; l < k; l++ {
+			if wFlat[rowOffset+l] > threshold {
+				rowSum++
+			}
+		}
+		assert(rowSum <= 1, "delegation row indicator sum must be <= 1")
+		out[i] = 1 - rowSum
+	}
+
+	return out
+}
+
+func delegatedVoterWeightsPlain(D [][]uint64, wFlat []uint64, n, k, T int) []uint64 {
+	assert(len(D) == n, "len(D) must be n")
+	for i := range D {
+		assert(len(D[i]) == k, "len(D[i]) must be k")
+	}
+
+	dTilde := delegationIndicatorPlain(wFlat, n, k, T)
+	delegateSupport := make([]uint64, k)
+	threshold := uint64(T / 2)
+	for i := 0; i < n; i++ {
+		rowOffset := i * k
+		for l := 0; l < k; l++ {
+			if wFlat[rowOffset+l] > threshold {
+				delegateSupport[l]++
+			}
+		}
+	}
+
+	out := make([]uint64, n)
+	for i := 0; i < n; i++ {
+		out[i] = dTilde[i]
+		for l := 0; l < k; l++ {
+			out[i] += D[i][l] * delegateSupport[l]
+		}
+	}
+
+	return out
+}
+
+func delegateSupportPlain(wFlat []uint64, n, k, T int) []uint64 {
+	assert(n >= 0, "n must be >= 0")
+	assert(k > 0, "k must be > 0")
+	assert(T > 0, "T must be > 0")
+	assert(len(wFlat) == n*k, "len(wFlat) must be n*k")
+
+	out := make([]uint64, k)
+	threshold := uint64(T / 2)
+	for i := 0; i < n; i++ {
+		rowOffset := i * k
+		for l := 0; l < k; l++ {
+			if wFlat[rowOffset+l] > threshold {
+				out[l]++
+			}
+		}
+	}
+
+	return out
+}
+
+func delegatedMaskedTallyPlain(D [][]uint64, wFlat, tFlat []uint64, n, b, k, T int) []uint64 {
+	assert(len(tFlat) == n*b, "len(tFlat) must be n*b")
+
+	voterWeights := delegatedVoterWeightsPlain(D, wFlat, n, k, T)
+	out := make([]uint64, b)
+	threshold := uint64(T / 2)
+	for i := 0; i < n; i++ {
+		rowOffset := i * b
+		for c := 0; c < b; c++ {
+			if tFlat[rowOffset+c] > threshold {
+				out[c] += voterWeights[i]
+			}
+		}
+	}
+
+	return out
+}
+
+func decodePackedBlocks(
+	decryptor *rlwe.Decryptor,
+	encoder *bgv.Encoder,
+	params bgv.Parameters,
+	layout packingLayout,
+	blockSize int,
+	fieldWidth int,
+	totalValues int,
+	ciphertexts []*rlwe.Ciphertext,
+) []uint64 {
+	decoded := make([]uint64, 0, totalValues)
+	for _, ct := range ciphertexts {
+		pt := decryptor.DecryptNew(ct)
+		slots := make([]uint64, params.MaxSlots())
+		must(encoder.Decode(pt, slots))
+		for row := 0; row < layout.rowsPerCiphertext && len(decoded) < totalValues; row++ {
+			rowBase := row * layout.colsPerCiphertext
+			for voter := 0; voter < layout.votersPerRow && len(decoded) < totalValues; voter++ {
+				blockStart := rowBase + voter*blockSize
+				decoded = append(decoded, slots[blockStart:blockStart+fieldWidth]...)
+			}
+		}
+	}
+	return decoded
+}
+
+func verifyIndicatorCiphertexts(
+	label string,
+	decryptor *rlwe.Decryptor,
+	encoder *bgv.Encoder,
+	params bgv.Parameters,
+	layout packingLayout,
+	blockSize int,
+	fieldWidth int,
+	values []uint64,
+	ciphertexts []*rlwe.Ciphertext,
+	T int,
+) {
+	decoded := decodePackedBlocks(decryptor, encoder, params, layout, blockSize, fieldWidth, len(values), ciphertexts)
+	expected := indicatorVectorPlain(values, T)
+	assert(len(decoded) == len(expected), fmt.Sprintf("%s length mismatch: expected %d, got %d", label, len(expected), len(decoded)))
+	for i := range expected {
+		assert(decoded[i] == expected[i], fmt.Sprintf("%s mismatch at index %d: expected %d, got %d", label, i, expected[i], decoded[i]))
+	}
+	log.Printf("ASSERT PASSED: %s", label)
+}
+
+func decodeLeadingSlots(
+	decryptor *rlwe.Decryptor,
+	encoder *bgv.Encoder,
+	params bgv.Parameters,
+	slotCount int,
+	ciphertext *rlwe.Ciphertext,
+) []uint64 {
+	pt := decryptor.DecryptNew(ciphertext)
+	slots := make([]uint64, params.MaxSlots())
+	must(encoder.Decode(pt, slots))
+	decoded := append([]uint64(nil), slots[:slotCount]...)
+	return decoded
+}
+
+func verifyLeadingSlotsCiphertext(
+	label string,
+	decryptor *rlwe.Decryptor,
+	encoder *bgv.Encoder,
+	params bgv.Parameters,
+	expected []uint64,
+	ciphertext *rlwe.Ciphertext,
+) {
+	decoded := decodeLeadingSlots(decryptor, encoder, params, len(expected), ciphertext)
+	assert(len(decoded) == len(expected), fmt.Sprintf("%s length mismatch: expected %d, got %d", label, len(expected), len(decoded)))
+	for i := range expected {
+		assert(decoded[i] == expected[i], fmt.Sprintf("%s mismatch at index %d: expected %d, got %d", label, i, expected[i], decoded[i]))
+	}
+	log.Printf("ASSERT PASSED: %s", label)
+}
+
+func decodeBaseSlotVector(
+	decryptor *rlwe.Decryptor,
+	encoder *bgv.Encoder,
+	params bgv.Parameters,
+	layout packingLayout,
+	blockSize int,
+	valueCount int,
+	ciphertexts []*rlwe.Ciphertext,
+) []uint64 {
+	decoded := make([]uint64, 0, valueCount)
+	for _, ct := range ciphertexts {
+		pt := decryptor.DecryptNew(ct)
+		slots := make([]uint64, params.MaxSlots())
+		must(encoder.Decode(pt, slots))
+		for row := 0; row < layout.rowsPerCiphertext && len(decoded) < valueCount; row++ {
+			rowBase := row * layout.colsPerCiphertext
+			for voter := 0; voter < layout.votersPerRow && len(decoded) < valueCount; voter++ {
+				blockStart := rowBase + voter*blockSize
+				decoded = append(decoded, slots[blockStart])
+			}
+		}
+	}
+	return decoded
+}
+
+func verifyBaseSlotCiphertexts(
+	label string,
+	decryptor *rlwe.Decryptor,
+	encoder *bgv.Encoder,
+	params bgv.Parameters,
+	layout packingLayout,
+	blockSize int,
+	expected []uint64,
+	ciphertexts []*rlwe.Ciphertext,
+) {
+	decoded := decodeBaseSlotVector(decryptor, encoder, params, layout, blockSize, len(expected), ciphertexts)
+	assert(len(decoded) == len(expected), fmt.Sprintf("%s length mismatch: expected %d, got %d", label, len(expected), len(decoded)))
+	for i := range expected {
+		assert(decoded[i] == expected[i], fmt.Sprintf("%s mismatch at index %d: expected %d, got %d", label, i, expected[i], decoded[i]))
+	}
+	log.Printf("ASSERT PASSED: %s", label)
+}
