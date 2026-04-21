@@ -11,10 +11,10 @@ import (
 
 func main() {
 	// 1. Initialization
-	n := 10000 // number of voters
-	b := 10    // number of candidates
-	k := 5     // number of delegates
-	T := 9     // number of periods (always odd)
+	n := 10_000 // number of voters
+	b := 10     // number of candidates
+	k := 100    // number of delegates
+	T := 9      // number of periods (always odd)
 	//D := [][]uint64{{0, 0, 0}, {0, 0, 0}, {0, 0, 1}, {0, 0, 0}, {0, 0, 0}, {1, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 1, 0}}
 	//w := []uint64{0, 0, 1, 0, 0, 9, 0, 0, 2, 0, 0, 5, 1, 0, 3, 1, 0, 8, 1, 0, 1, 0, 1, 1, 1, 0, 2, 2, 0, 6}
 	//t := []uint64{2, 7, 1, 8, 7, 2, 8, 1, 6, 3, 2, 7, 3, 6, 1, 8, 6, 3, 5, 4}
@@ -146,7 +146,6 @@ func main() {
 
 	// 3.3 - Computing the delegating indicator vector
 	dTildeCiphertexts := make([]*rlwe.Ciphertext, len(wCiphertexts))
-	baseMasks := make([]*rlwe.Plaintext, len(wCiphertexts))
 	for ctIdx, wCt := range wCiphertexts {
 		ctRowSums := wCt.CopyNew()
 		for shift := 1; shift < k; shift++ {
@@ -154,25 +153,20 @@ func main() {
 			must(evaluator.Add(ctRowSums, ctRot, ctRowSums))
 		}
 
-		baseMask := make([]uint64, params.MaxSlots())
-		oneMask := make([]uint64, params.MaxSlots())
+		mask := make([]uint64, params.MaxSlots())
 		votersInCt := min(layout.votersPerCiphertext, n-ctIdx*layout.votersPerCiphertext)
 		for voterIdx := 0; voterIdx < votersInCt; voterIdx++ {
 			slotIdx := (voterIdx / layout.votersPerRow) * layout.colsPerCiphertext
 			slotIdx += (voterIdx % layout.votersPerRow) * blockSize
-			baseMask[slotIdx] = 1
-			oneMask[slotIdx] = 1
+			mask[slotIdx] = 1
 		}
 
-		ptBaseMask := bgv.NewPlaintext(params, params.MaxLevel())
-		ptOneMask := bgv.NewPlaintext(params, params.MaxLevel())
-		must(encoder.Encode(baseMask, ptBaseMask))
-		must(encoder.Encode(oneMask, ptOneMask))
-		baseMasks[ctIdx] = ptBaseMask
+		ptMask := bgv.NewPlaintext(params, params.MaxLevel())
+		must(encoder.Encode(mask, ptMask))
 
-		ctBase := must1(evaluator.MulNew(ctRowSums, ptBaseMask))
+		ctBase := must1(evaluator.MulNew(ctRowSums, ptMask))
 		ctNeg := must1(evaluator.MulNew(ctBase, -1))
-		dTildeCiphertexts[ctIdx] = must1(evaluator.AddNew(ctNeg, ptOneMask))
+		dTildeCiphertexts[ctIdx] = must1(evaluator.AddNew(ctNeg, ptMask))
 	}
 	verifyBaseSlotCiphertexts("dTilde", decryptor, encoder, params, layout, blockSize, delegationIndicatorPlain(w, n, k, T), dTildeCiphertexts)
 
@@ -203,6 +197,18 @@ func main() {
 	verifyLeadingSlotsCiphertext("delegate support", decryptor, encoder, params, delegateSupportPlain(w, n, k, T), ctDelegateSupport)
 
 	// 3.5 - Compute the voter weights votWeights = Dw + dTilde
+	// Precompute one-hot target mask plaintexts indexed by local voter position within a ciphertext.
+	targetMaskPts := make([]*rlwe.Plaintext, layout.votersPerCiphertext)
+	for localVoterIdx := range layout.votersPerCiphertext {
+		blockStart := (localVoterIdx / layout.votersPerRow) * layout.colsPerCiphertext
+		blockStart += (localVoterIdx % layout.votersPerRow) * blockSize
+		targetMask := make([]uint64, params.MaxSlots())
+		targetMask[blockStart] = 1
+		pt := bgv.NewPlaintext(params, params.MaxLevel())
+		must(encoder.Encode(targetMask, pt))
+		targetMaskPts[localVoterIdx] = pt
+	}
+
 	voterWeightCiphertexts := make([]*rlwe.Ciphertext, len(dTildeCiphertexts))
 	dwCiphertexts := make([]*rlwe.Ciphertext, len(dTildeCiphertexts))
 	for ctIdx := range voterWeightCiphertexts {
@@ -218,13 +224,8 @@ func main() {
 					continue
 				}
 
-				targetMask := make([]uint64, params.MaxSlots())
-				targetMask[blockStart] = 1
-				ptTargetMask := bgv.NewPlaintext(params, params.MaxLevel())
-				must(encoder.Encode(targetMask, ptTargetMask))
-
 				ctRot := must1(evaluator.RotateColumnsNew(ctDelegateSupport, l-blockStart))
-				ctTerm := must1(evaluator.MulNew(ctRot, ptTargetMask))
+				ctTerm := must1(evaluator.MulNew(ctRot, targetMaskPts[localVoterIdx]))
 				must(evaluator.Add(ctDw, ctTerm, ctDw))
 			}
 		}
