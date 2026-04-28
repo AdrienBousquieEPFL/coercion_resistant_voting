@@ -25,8 +25,9 @@ func main() {
 	// 2. BGV setup and encryption
 	// Edit these values to experiment with BGV settings.
 	// IMPORTANT: set either (Q, P) OR (LogQ, LogP), not both.
+	LogN := 14
 	paramsLiteral := bgv.ParametersLiteral{
-		LogN: 14, // ring degree N = 2^LogN
+		LogN: LogN, // ring degree N = 2^LogN
 
 		// Option A: let Lattigo generate NTT primes from bit-sizes.
 		LogQ: []int{55, 45, 45, 45, 45, 45, 45, 45}, // ciphertext modulus chain
@@ -36,8 +37,8 @@ func main() {
 		// Q: []uint64{...},
 		// P: []uint64{...},
 
-		// Plaintext modulus t (must be non-zero, <= Q[0], and coprime with Q).
-		PlaintextModulus: 0x10001,
+		// Plaintext modulus t: smallest NTT-friendly prime >= n.
+		PlaintextModulus: pickPlaintextModulus(uint64(n), LogN),
 
 		// Secret and error distributions (optional; these are defaults).
 		Xs: ring.Ternary{P: 2.0 / 3.0},
@@ -58,6 +59,7 @@ func main() {
 	fmt.Println("Ring type =", params.RingType())
 	fmt.Println("Slots =", params.MaxSlots())
 	fmt.Println("Dimensions =", params.MaxDimensions())
+	assert(uint64(n) <= params.PlaintextModulus(), "n must be <= plaintext modulus")
 
 	encoder := bgv.NewEncoder(params)
 	encryptor := bgv.NewEncryptor(params, pk)

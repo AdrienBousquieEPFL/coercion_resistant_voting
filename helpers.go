@@ -4,7 +4,25 @@ import (
 	cryptorand "crypto/rand"
 	"encoding/binary"
 	"log"
+	"math/bits"
+
+	"github.com/tuneinsight/lattigo/v6/ring"
 )
+
+// pickPlaintextModulus returns the smallest NTT-friendly prime t such that
+// t >= n, where t ≡ 1 (mod 2N) with N = 1<<logN.
+func pickPlaintextModulus(n uint64, logN int) uint64 {
+	bitSize := max(uint64(bits.Len64(n)), uint64(logN+1))
+	nthRoot := uint64(1) << (logN + 1)
+	g := ring.NewNTTFriendlyPrimesGenerator(bitSize, nthRoot)
+	for {
+		p, err := g.NextUpstreamPrime()
+		must(err)
+		if p >= n {
+			return p
+		}
+	}
+}
 
 func must(err error) {
 	if err != nil {
