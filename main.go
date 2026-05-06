@@ -18,6 +18,7 @@ func main() {
 	//D := [][]uint64{{0, 0, 0}, {0, 0, 0}, {0, 0, 1}, {0, 0, 0}, {0, 0, 0}, {1, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 1, 0}}
 	//w := []uint64{0, 0, 1, 0, 0, 9, 0, 0, 2, 0, 0, 5, 1, 0, 3, 1, 0, 8, 1, 0, 1, 0, 1, 1, 1, 0, 2, 2, 0, 6}
 	//t := []uint64{2, 7, 1, 8, 7, 2, 8, 1, 6, 3, 2, 7, 3, 6, 1, 8, 6, 3, 5, 4}
+	LogN := 14
 	D := randomDelegationMatrix(n, k)    // delegation matrix of size n x k, where D[i][j] is the delegate index for voter i and delegate j
 	w := randomDelegationVector(n, k, T) // weight vector representing the voting power per voter
 	t := randomVotingVector(n, b, T)     // voting vector packed as an n x b row-major vector
@@ -25,7 +26,6 @@ func main() {
 	// 2. BGV setup and encryption
 	// Edit these values to experiment with BGV settings.
 	// IMPORTANT: set either (Q, P) OR (LogQ, LogP), not both.
-	LogN := 14
 	paramsLiteral := bgv.ParametersLiteral{
 		LogN: LogN, // ring degree N = 2^LogN
 
