@@ -3,7 +3,7 @@ package main
 import (
 	cryptorand "crypto/rand"
 	"encoding/binary"
-	"log"
+	"fmt"
 
 	"github.com/tuneinsight/lattigo/v6/ring"
 )
@@ -22,9 +22,11 @@ func pickPlaintextModulus(n uint64, logN int) uint64 {
 	return p
 }
 
+// must/assert panic instead of log.Fatal so the deferred crash handler in
+// main runs and can dump a crash.json before the process exits.
 func must(err error) {
 	if err != nil {
-		log.Fatal(err)
+		panic(fmt.Errorf("must: %w", err))
 	}
 }
 
@@ -35,7 +37,7 @@ func must1[T any](v T, err error) T {
 
 func assert(cond bool, msg string) {
 	if !cond {
-		log.Fatal("assertion failed: ", msg)
+		panic("assertion failed: " + msg)
 	}
 }
 
