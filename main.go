@@ -12,16 +12,15 @@ import (
 
 func main() {
 	// 1. Initialization
-	n := 10_000 // number of voters
-	b := 10     // number of candidates
-	k := 100    // number of delegates
-	T := 9      // number of periods (always odd)
+	n := 1_000 // number of voters
+	b := 10    // number of candidates
+	k := 10    // number of delegates
+	T := 3     // number of periods (always odd)
 	//D := [][]uint64{{0, 0, 0}, {0, 0, 0}, {0, 0, 1}, {0, 0, 0}, {0, 0, 0}, {1, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 1, 0}}
 	//w := []uint64{0, 0, 1, 0, 0, 9, 0, 0, 2, 0, 0, 5, 1, 0, 3, 1, 0, 8, 1, 0, 1, 0, 1, 1, 1, 0, 2, 2, 0, 6}
 	//t := []uint64{2, 7, 1, 8, 7, 2, 8, 1, 6, 3, 2, 7, 3, 6, 1, 8, 6, 3, 5, 4}
-	LogN := 14
 
-	InitMetrics(runMeta{N: n, B: b, K: k, T: T, LogN: LogN})
+	InitMetrics(runMeta{N: n, B: b, K: k, T: T})
 	defer func() {
 		if r := recover(); r != nil {
 			RecordCrash(r, debug.Stack())
@@ -50,7 +49,7 @@ func main() {
 	// Edit these values to experiment with BGV settings.
 	// IMPORTANT: set either (Q, P) OR (LogQ, LogP), not both.
 	paramsLiteral := bgv.ParametersLiteral{
-		LogN: LogN, // ring degree N = 2^LogN
+		LogN: 14, // ring degree N = 2^LogN
 
 		// Option A: let Lattigo generate NTT primes from bit-sizes.
 		LogQ: []int{55, 45, 45, 45, 45, 45, 45, 45}, // ciphertext modulus chain
@@ -61,7 +60,7 @@ func main() {
 		// P: []uint64{...},
 
 		// Plaintext modulus t: smallest NTT-friendly prime >= n.
-		PlaintextModulus: pickPlaintextModulus(uint64(n), LogN),
+		PlaintextModulus: 65_537,
 
 		// Secret and error distributions (optional; these are defaults).
 		Xs: ring.Ternary{P: 2.0 / 3.0},
@@ -71,12 +70,15 @@ func main() {
 		},
 	}
 
+	// Record the chosen BGV parameters into the run metadata (meta.json) so each
+	// run is self-describing for correctness and security (lattice) analysis.
+	SetBGVParams(paramsLiteral)
+
 	// Build BGV crypto context.
 	rlweLiteral := paramsLiteral.GetRLWEParametersLiteral()
 	rlweLiteral.RingType = ring.Standard
 	rlweParams := must1(rlwe.NewParametersFromLiteral(rlweLiteral))
 	params := must1(bgv.NewParameters(rlweParams, paramsLiteral.PlaintextModulus))
-	SetPlaintextModulus(params.PlaintextModulus())
 	kgen := bgv.NewKeyGenerator(params)
 	sk, pk := kgen.GenKeyPairNew()
 	fmt.Println("Plaintext modulus =", params.PlaintextModulus())

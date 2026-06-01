@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/bits"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,23 +19,44 @@ import (
 	"time"
 
 	"github.com/tuneinsight/lattigo/v6/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/ring"
+	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
 )
 
 // runMeta is serialized to meta.json. It captures every parameter needed to
 // reproduce a run and to interpret the other CSVs against fixed inputs.
 type runMeta struct {
-	RunID     string `json:"run_id"`
-	StartedAt string `json:"started_at"`
-	N         int    `json:"n"`
-	B         int    `json:"b"`
-	K         int    `json:"k"`
-	T         int    `json:"T"`
-	LogN      int    `json:"logN"`
-	PTModulus uint64 `json:"plaintext_modulus"`
-	GitSHA    string `json:"git_sha"`
-	Hostname  string `json:"hostname"`
-	GoVersion string `json:"go_version"`
-	NumCPU    int    `json:"num_cpu"`
+	RunID     string         `json:"run_id"`
+	StartedAt string         `json:"started_at"`
+	N         int            `json:"n"`
+	B         int            `json:"b"`
+	K         int            `json:"k"`
+	T         int            `json:"T"`
+	BGV       *bgvParamsMeta `json:"bgv,omitempty"`
+	GitSHA    string         `json:"git_sha"`
+	Hostname  string         `json:"hostname"`
+	GoVersion string         `json:"go_version"`
+	NumCPU    int            `json:"num_cpu"`
+}
+
+// bgvParamsMeta captures the BGV/RLWE parameters chosen for a run. These are
+// the inputs needed to reason about both correctness (noise budget) and
+// security: the underlying lattice problem is fixed by the ring degree
+// N = 2^LogN, the modulus QP, and the secret/error distributions. LogQPBits is
+// what you feed a lattice estimator as log2(q) (the keys live mod Q*P).
+type bgvParamsMeta struct {
+	LogN             int      `json:"logN"` // ring degree N = 2^LogN
+	LogQ             []int    `json:"logQ,omitempty"`
+	LogP             []int    `json:"logP,omitempty"`
+	Q                []uint64 `json:"Q,omitempty"`
+	P                []uint64 `json:"P,omitempty"`
+	LogQBits         int      `json:"logQ_bits"`  // total ciphertext modulus size = sum(LogQ)
+	LogPBits         int      `json:"logP_bits"`  // total special-prime size = sum(LogP)
+	LogQPBits        int      `json:"logQP_bits"` // log2(Q*P): the modulus relevant for security
+	QLimbs           int      `json:"q_limbs"`    // number of RNS limbs in the Q chain
+	PlaintextModulus uint64   `json:"plaintext_modulus"`
+	SecretDist       string   `json:"secret_dist"` // Xs
+	ErrorDist        string   `json:"error_dist"`  // Xe
 }
 
 type phaseRecord struct {
@@ -91,7 +113,8 @@ type metricsRecorder struct {
 var rec *metricsRecorder
 
 // InitMetrics initialises the recorder and starts the background sampler.
-// PTModulus is filled in later via SetPlaintextModulus once params are built.
+// The BGV parameters are filled in later via SetBGVParams, since the
+// ParametersLiteral is only constructed during the BGV setup phase.
 func InitMetrics(meta runMeta) {
 	now := time.Now()
 	runID := fmt.Sprintf("%s_n%d_b%d_k%d_T%d",
@@ -125,14 +148,68 @@ func InitMetrics(meta runMeta) {
 	go rec.sampleLoop(250 * time.Millisecond)
 }
 
-// SetPlaintextModulus backfills the modulus into meta after BGV setup.
-func SetPlaintextModulus(p uint64) {
+// SetBGVParams backfills the chosen BGV parameters into meta. It is called
+// once the ParametersLiteral has been constructed (InitMetrics runs before it
+// exists). Values are read straight off the literal — i.e. exactly what the
+// user chose — and the total modulus sizes are derived for convenience.
+func SetBGVParams(p bgv.ParametersLiteral) {
 	if rec == nil {
 		return
 	}
+	m := &bgvParamsMeta{
+		LogN:             p.LogN,
+		LogQ:             append([]int(nil), p.LogQ...),
+		LogP:             append([]int(nil), p.LogP...),
+		Q:                append([]uint64(nil), p.Q...),
+		P:                append([]uint64(nil), p.P...),
+		PlaintextModulus: p.PlaintextModulus,
+		SecretDist:       describeDistribution(p.Xs),
+		ErrorDist:        describeDistribution(p.Xe),
+	}
+	m.LogQBits = modulusBits(p.LogQ, p.Q)
+	m.LogPBits = modulusBits(p.LogP, p.P)
+	m.LogQPBits = m.LogQBits + m.LogPBits
+	m.QLimbs = max(len(p.LogQ), len(p.Q))
 	rec.mu.Lock()
-	rec.meta.PTModulus = p
+	rec.meta.BGV = m
 	rec.mu.Unlock()
+}
+
+// modulusBits returns the total bit-length of a modulus described either by
+// per-prime bit-sizes (logSizes, the LogQ/LogP option) or by explicit primes
+// (primes, the Q/P option). Exactly one of the two is expected to be set.
+func modulusBits(logSizes []int, primes []uint64) int {
+	total := 0
+	for _, s := range logSizes {
+		total += s
+	}
+	if total == 0 {
+		for _, q := range primes {
+			total += bits.Len64(q)
+		}
+	}
+	return total
+}
+
+// describeDistribution renders a ring distribution into a compact, log-friendly
+// string, e.g. "Ternary(p=0.6667)" (uniform ternary) or
+// "DiscreteGaussian(sigma=3.2, bound=19.2)".
+func describeDistribution(d ring.DistributionParameters) string {
+	switch v := d.(type) {
+	case ring.Ternary:
+		if v.H > 0 {
+			return fmt.Sprintf("Ternary(H=%d)", v.H)
+		}
+		return fmt.Sprintf("Ternary(p=%.4g)", v.P)
+	case ring.DiscreteGaussian:
+		return fmt.Sprintf("DiscreteGaussian(sigma=%.4g, bound=%.4g)", v.Sigma, v.Bound)
+	case ring.Uniform:
+		return "Uniform"
+	case nil:
+		return "default"
+	default:
+		return d.Type()
+	}
 }
 
 func (r *metricsRecorder) sampleLoop(interval time.Duration) {
