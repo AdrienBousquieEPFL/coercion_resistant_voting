@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 	"github.com/tuneinsight/lattigo/v6/ring"
 	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
@@ -85,6 +86,23 @@ type sampleRecord struct {
 	HeapAllocMiB float64
 	HeapSysMiB   float64
 	RSSMiB       float64
+	// ProcCPUPct is this process's CPU usage over the sampling interval, derived
+	// from rusage (user+sys) deltas. It ranges 0..NumCPU*100: 100 means one core
+	// fully busy, NumCPU*100 means every core saturated by this process.
+	ProcCPUPct float64
+	// ProcCoresBusy is ProcCPUPct/100 — the effective number of cores the process
+	// kept busy. This is the parallelism signal: a phase pinned near 1.0 on a
+	// 14-core box is sequential and a candidate for goroutine parallelisation.
+	ProcCoresBusy float64
+}
+
+// cpuSampleRecord holds one system-wide per-core utilisation snapshot. Stored in
+// long format (one row per core per sample in cpu.csv) so the schema is
+// independent of the machine's core count. Unlike ProcCPUPct this is the whole
+// machine's view (all processes), which on a shared host includes other load.
+type cpuSampleRecord struct {
+	TMs     int64
+	PerCore []float64 // index = logical core id, value = util% over interval
 }
 
 type Phase struct {
@@ -105,6 +123,7 @@ type metricsRecorder struct {
 	phases       []phaseRecord
 	objects      []objectRecord
 	samples      []sampleRecord
+	cpuSamples   []cpuSampleRecord
 	opCounts     map[string]map[string]int64 // phase -> op -> count
 	stop         chan struct{}
 	done         chan struct{}
@@ -218,6 +237,16 @@ func (r *metricsRecorder) sampleLoop(interval time.Duration) {
 	defer tick.Stop()
 	const flushEvery = 2 * time.Second
 	nextFlush := time.Now().Add(flushEvery)
+
+	// Baselines for the process-CPU delta: we measure how much CPU time the
+	// process burned between two ticks relative to the wall time elapsed.
+	lastCPU := cpuTime()
+	lastWall := time.Now()
+	// Prime gopsutil's per-core counters so the first real sample reports the
+	// delta since loop start rather than since boot. Errors are ignored: per-core
+	// stats are best-effort and must never disrupt sampling.
+	_, _ = cpu.Percent(0, true)
+
 	for {
 		select {
 		case <-r.stop:
@@ -226,15 +255,34 @@ func (r *metricsRecorder) sampleLoop(interval time.Duration) {
 			var ms runtime.MemStats
 			runtime.ReadMemStats(&ms)
 			phase, _ := r.currentPhase.Load().(string)
-			s := sampleRecord{
-				TMs:          now.Sub(r.startTime).Milliseconds(),
-				Phase:        phase,
-				HeapAllocMiB: bToMiB(ms.HeapAlloc),
-				HeapSysMiB:   bToMiB(ms.HeapSys),
-				RSSMiB:       currentRSSMiB(),
+
+			cpuNow := cpuTime()
+			wallDelta := now.Sub(lastWall)
+			procCores := 0.0
+			if wallDelta > 0 {
+				procCores = float64(cpuNow-lastCPU) / float64(wallDelta)
 			}
+			lastCPU, lastWall = cpuNow, now
+
+			s := sampleRecord{
+				TMs:           now.Sub(r.startTime).Milliseconds(),
+				Phase:         phase,
+				HeapAllocMiB:  bToMiB(ms.HeapAlloc),
+				HeapSysMiB:    bToMiB(ms.HeapSys),
+				RSSMiB:        currentRSSMiB(),
+				ProcCPUPct:    procCores * 100,
+				ProcCoresBusy: procCores,
+			}
+			// System-wide per-core utilisation since the previous call. Best-effort.
+			perCore, err := cpu.Percent(0, true)
 			r.mu.Lock()
 			r.samples = append(r.samples, s)
+			if err == nil && len(perCore) > 0 {
+				r.cpuSamples = append(r.cpuSamples, cpuSampleRecord{
+					TMs:     s.TMs,
+					PerCore: perCore,
+				})
+			}
 			r.mu.Unlock()
 			if now.After(nextFlush) {
 				flushCheckpoint()
@@ -263,6 +311,7 @@ func flushCheckpoint() {
 		"phases.csv":  writePhases,
 		"objects.csv": writeObjects,
 		"samples.csv": writeSamples,
+		"cpu.csv":     writeCPU,
 		"ops.csv":     writeOps,
 	} {
 		if err := fn(); err != nil {
@@ -543,6 +592,9 @@ func FinalizeMetrics() error {
 	if err := writeSamples(); err != nil {
 		return err
 	}
+	if err := writeCPU(); err != nil {
+		return err
+	}
 	if err := writeOps(); err != nil {
 		return err
 	}
@@ -680,7 +732,10 @@ func writeSamples() error {
 	defer f.Close()
 	w := csv.NewWriter(f)
 	defer w.Flush()
-	if err := w.Write([]string{"t_ms", "phase", "heap_alloc_mib", "heap_sys_mib", "rss_mib"}); err != nil {
+	if err := w.Write([]string{
+		"t_ms", "phase", "heap_alloc_mib", "heap_sys_mib", "rss_mib",
+		"proc_cpu_pct", "proc_cores_busy",
+	}); err != nil {
 		return err
 	}
 	for _, s := range rec.samples {
@@ -688,8 +743,37 @@ func writeSamples() error {
 			strconv.FormatInt(s.TMs, 10),
 			s.Phase,
 			f3(s.HeapAllocMiB), f3(s.HeapSysMiB), f3(s.RSSMiB),
+			f3(s.ProcCPUPct), f3(s.ProcCoresBusy),
 		}); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// writeCPU emits system-wide per-core utilisation in long format: one row per
+// (sample, core). Long format keeps the schema independent of how many cores the
+// host has, so cpu.csv from a 14-core and a 64-core machine parse identically.
+func writeCPU() error {
+	f, err := os.Create(filepath.Join(rec.runDir, "cpu.csv"))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	w := csv.NewWriter(f)
+	defer w.Flush()
+	if err := w.Write([]string{"t_ms", "core", "util_pct"}); err != nil {
+		return err
+	}
+	for _, s := range rec.cpuSamples {
+		for core, pct := range s.PerCore {
+			if err := w.Write([]string{
+				strconv.FormatInt(s.TMs, 10),
+				strconv.Itoa(core),
+				f3(pct),
+			}); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

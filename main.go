@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"runtime/debug"
 
@@ -12,10 +13,18 @@ import (
 
 func main() {
 	// 1. Initialization
-	n := 1_000 // number of voters
-	b := 10    // number of candidates
-	k := 10    // number of delegates
-	T := 3     // number of periods (always odd)
+	// Problem dimensions are configurable via CLI flags so the benchmark can
+	// sweep them without recompiling. Defaults match the original hardcoded run.
+	nFlag := flag.Int("n", 100, "number of voters")
+	bFlag := flag.Int("b", 5, "number of candidates")
+	kFlag := flag.Int("k", 5, "number of delegates")
+	TFlag := flag.Int("T", 5, "number of periods (always odd)")
+	flag.Parse()
+
+	n := *nFlag
+	b := *bFlag
+	k := *kFlag
+	T := *TFlag
 	//D := [][]uint64{{0, 0, 0}, {0, 0, 0}, {0, 0, 1}, {0, 0, 0}, {0, 0, 0}, {1, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 1, 0}}
 	//w := []uint64{0, 0, 1, 0, 0, 9, 0, 0, 2, 0, 0, 5, 1, 0, 3, 1, 0, 8, 1, 0, 1, 0, 1, 1, 1, 0, 2, 2, 0, 6}
 	//t := []uint64{2, 7, 1, 8, 7, 2, 8, 1, 6, 3, 2, 7, 3, 6, 1, 8, 6, 3, 5, 4}
