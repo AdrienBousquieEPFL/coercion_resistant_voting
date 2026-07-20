@@ -7,24 +7,30 @@ import (
 
 	bgvpoly "github.com/tuneinsight/lattigo/v6/circuits/bgv/polynomial"
 	"github.com/tuneinsight/lattigo/v6/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/multiparty"
 	"github.com/tuneinsight/lattigo/v6/ring"
 	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
+
+	"github.com/tuneinsight/lattigo/v6/utils/sampling"
 )
 
 func main() {
+	fmt.Println("Running the voting algorithm with a distributed secret key\n")
 	// 1. Initialization
 	// Problem dimensions are configurable via CLI flags so the benchmark can
 	// sweep them without recompiling. Defaults match the original hardcoded run.
-	nFlag := flag.Int("n", 100, "number of voters")
-	bFlag := flag.Int("b", 5, "number of candidates")
-	kFlag := flag.Int("k", 5, "number of delegates")
-	TFlag := flag.Int("T", 5, "number of periods (always odd)")
+	nFlag := flag.Int("n", 5, "number of voters")
+	bFlag := flag.Int("b", 2, "number of candidates")
+	kFlag := flag.Int("k", 2, "number of delegates")
+	TFlag := flag.Int("T", 3, "number of periods (always odd)")
+	NFlag := flag.Int("N", 3, "number of decryptors")
 	flag.Parse()
 
 	n := *nFlag
 	b := *bFlag
 	k := *kFlag
 	T := *TFlag
+	N := *NFlag
 	//D := [][]uint64{{0, 0, 0}, {0, 0, 0}, {0, 0, 1}, {0, 0, 0}, {0, 0, 0}, {1, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 1, 0}}
 	//w := []uint64{0, 0, 1, 0, 0, 9, 0, 0, 2, 0, 0, 5, 1, 0, 3, 1, 0, 8, 1, 0, 1, 0, 1, 1, 1, 0, 2, 2, 0, 6}
 	//t := []uint64{2, 7, 1, 8, 7, 2, 8, 1, 6, 3, 2, 7, 3, 6, 1, 8, 6, 3, 5, 4}
@@ -88,13 +94,44 @@ func main() {
 	rlweLiteral.RingType = ring.Standard
 	rlweParams := must1(rlwe.NewParametersFromLiteral(rlweLiteral))
 	params := must1(bgv.NewParameters(rlweParams, paramsLiteral.PlaintextModulus))
-	kgen := bgv.NewKeyGenerator(params)
-	sk, pk := kgen.GenKeyPairNew()
+
+	/****** COMMENTED OUT FOR MULTIPARY CASE ******/
+	// kgen := bgv.NewKeyGenerator(params)
+	// sk, pk := kgen.GenKeyPairNew()
+	/******************************************/
+
 	fmt.Println("Plaintext modulus =", params.PlaintextModulus())
 	fmt.Println("Ring type =", params.RingType())
 	fmt.Println("Slots =", params.MaxSlots())
 	fmt.Println("Dimensions =", params.MaxDimensions())
 	assert(uint64(n) <= params.PlaintextModulus(), "n must be <= plaintext modulus")
+
+	/****** ADDED FOR MULTIPARY CASE ******/
+	// Creates a PRNG that will be used to sample the common reference string (crs)
+	crs, err := sampling.NewKeyedPRNG([]byte{'l', 'a', 't', 't', 'i', 'g', 'o'})
+	check(err)
+
+	// Generate some keys for the receiver (target party)
+	kgen := rlwe.NewKeyGenerator(params)
+	tsk, _ := kgen.GenKeyPairNew()
+
+	// Create the N input parties and generate their secret keys
+	P := genparties(params, N)
+
+	// Step 1: Setup of the collective public key and relinearization key
+	l.Printf("========= Collective Setup Phase =========")
+
+	pk := execCKGProtocol(params, crs, P)  // generates the collective public key
+	rlk := execRKGProtocol(params, crs, P) // generates the collective relinearization key
+
+	// evk := rlwe.NewMemEvaluationKeySet(rlk) // creates the evaluation key from the relinearization key
+
+	fmt.Println("Setup done (cloud: %s, party: %s)",
+		elapsedRKGCloud+elapsedCKGCloud, elapsedRKGParty+elapsedCKGParty)
+
+	cks, err := multiparty.NewKeySwitchProtocol(params, ring.DiscreteGaussian{})
+
+	/******************************************/
 
 	encoder := bgv.NewEncoder(params)
 	encryptor := bgv.NewEncryptor(params, pk)
@@ -111,7 +148,9 @@ func main() {
 		BaseTwoDecomposition: nil,   // nil => default decomposition
 		Compressed:           false, // true => smaller key, needs expansion before use
 	}
-	rlk := kgen.GenRelinearizationKeyNew(sk, evkParams)
+	/****** COMMENTED OUT FOR MULTIPARY CASE ******/
+	// rlk := kgen.GenRelinearizationKeyNew(sk, evkParams)
+	/******************************************/
 	galEls := rlwe.GaloisElementsForInnerSum(params, b, layout.votersPerRow)
 	galEls = append(galEls, rlwe.GaloisElementsForInnerSum(params, blockSize, layout.votersPerRow)...)
 	for shift := 1; shift < k; shift++ {
@@ -132,7 +171,8 @@ func main() {
 		}
 	}
 	galEls = append(galEls, params.GaloisElementForRowRotation())
-	gks := kgen.GenGaloisKeysNew(galEls, sk, evkParams)
+	// gks := kgen.GenGaloisKeysNew(galEls, sk, evkParams)
+	gks := execGKGProtocol(params, crs, P, galEls, evkParams) // MP GEN OF GKS
 	evk := rlwe.NewMemEvaluationKeySet(rlk, gks...)
 	evaluator := bgv.NewEvaluator(params, evk, true)
 	polyEval := bgvpoly.NewEvaluator(params, evaluator)
@@ -225,7 +265,7 @@ func main() {
 	RecordCiphertexts("wCiphertexts", wCiphertexts)
 
 	// 3.2 - Lagrange interpolation I(x > T/2)
-	decryptor := bgv.NewDecryptor(params, sk)
+	decryptor := bgv.NewDecryptor(params, tsk) // CHANGED TO TSK FOR MULTIPARTY CASE
 	phIndicator := StartPhase("3.2-lagrange-indicator")
 	indicatorCoeffs := lagrangeIndicatorCoefficients(T, params.PlaintextModulus())
 	indicatorDegree := len(indicatorCoeffs) - 1
@@ -240,8 +280,8 @@ func main() {
 		wCiphertexts[i] = must1(polyEval.Evaluate(ct, bgvpoly.NewPolynomial(indicatorCoeffs), params.DefaultScale()))
 	}
 	phIndicator.Stop()
-	verifyIndicatorCiphertexts("t after indicator", decryptor, encoder, params, layout, blockSize, b, t, tCiphertexts, T)
-	verifyIndicatorCiphertexts("w after indicator", decryptor, encoder, params, layout, blockSize, k, w, wCiphertexts, T)
+	mp_verifyIndicatorCiphertexts("t after indicator", decryptor, encoder, params, layout, blockSize, b, t, tCiphertexts, T, &cks, P)
+	mp_verifyIndicatorCiphertexts("w after indicator", decryptor, encoder, params, layout, blockSize, k, w, wCiphertexts, T, &cks, P)
 
 	// 3.3 - Computing the delegating indicator vector
 	phDTilde := StartPhase("3.3-dTilde")
@@ -276,7 +316,7 @@ func main() {
 	}
 	phDTilde.Stop()
 	RecordCiphertexts("dTildeCiphertexts", dTildeCiphertexts)
-	verifyBaseSlotCiphertexts("dTilde", decryptor, encoder, params, layout, blockSize, delegationIndicatorPlain(w, n, k, T), dTildeCiphertexts)
+	mp_verifyBaseSlotCiphertexts("dTilde", decryptor, encoder, params, layout, blockSize, delegationIndicatorPlain(w, n, k, T), dTildeCiphertexts, &cks, P)
 
 	// 3.4 - Aggregate row of w
 	phSupport := StartPhase("3.4-delegate-support")
@@ -314,7 +354,7 @@ func main() {
 	ctDelegateSupport = must1(evaluator.MulNew(ctDelegateSupport, ptDelegateMask))
 	phSupport.Stop()
 	RecordCiphertexts("ctDelegateSupport", []*rlwe.Ciphertext{ctDelegateSupport})
-	verifyLeadingSlotsCiphertext("delegate support", decryptor, encoder, params, delegateSupportPlain(w, n, k, T), ctDelegateSupport)
+	mp_verifyLeadingSlotsCiphertext("delegate support", decryptor, encoder, params, delegateSupportPlain(w, n, k, T), ctDelegateSupport, &cks, P)
 
 	// 3.5 - Compute the voter weights votWeights = Dw + dTilde
 	// Precompute one-hot target mask plaintexts indexed by local voter position within a ciphertext.
@@ -369,8 +409,8 @@ func main() {
 			expectedDw[i] += D[i][l] * delegateSupport[l]
 		}
 	}
-	verifyBaseSlotCiphertexts("encrypted D w_d", decryptor, encoder, params, layout, blockSize, expectedDw, dwCiphertexts)
-	verifyBaseSlotCiphertexts("Dw_d + dTilde", decryptor, encoder, params, layout, blockSize, delegatedVoterWeightsPlain(D, w, n, k, T), voterWeightCiphertexts)
+	mp_verifyBaseSlotCiphertexts("encrypted D w_d", decryptor, encoder, params, layout, blockSize, expectedDw, dwCiphertexts, &cks, P)
+	mp_verifyBaseSlotCiphertexts("Dw_d + dTilde", decryptor, encoder, params, layout, blockSize, delegatedVoterWeightsPlain(D, w, n, k, T), voterWeightCiphertexts, &cks, P)
 
 	// 3.6 - Product of t and w
 	phTally := StartPhase("3.6-tally")
@@ -418,5 +458,5 @@ func main() {
 	must(encoder.Decode(ptResult, decoded))
 	phDecrypt.Stop()
 	fmt.Println("decrypted final tally =", decoded[:b])
-	verifyLeadingSlotsCiphertext("final tally", decryptor, encoder, params, delegatedMaskedTallyPlain(D, w, t, n, b, k, T), ctResult)
+	mp_verifyLeadingSlotsCiphertext("final tally", decryptor, encoder, params, delegatedMaskedTallyPlain(D, w, t, n, b, k, T), ctResult, &cks, P)
 }
