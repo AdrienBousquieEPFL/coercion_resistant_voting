@@ -72,7 +72,11 @@ func thresholdDecrypt(
 	// Extract plaintext from c0
 	pt := bgv.NewPlaintext(params, level)
 
-	pt.Value = out.Value[0]
+	// Preserve scale, NTT state, batching information, dimensions, etc.
+	*pt.MetaData = *out.MetaData
+
+	// Copy into the polynomial allocated by NewPlaintext.
+	pt.Value.CopyLvl(level, out.Value[0])
 
 	return pt
 }

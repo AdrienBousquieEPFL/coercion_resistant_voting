@@ -19,10 +19,10 @@ func main() {
 	// 1. Initialization
 	// Problem dimensions are configurable via CLI flags so the benchmark can
 	// sweep them without recompiling. Defaults match the original hardcoded run.
-	nFlag := flag.Int("n", 5, "number of voters")
-	bFlag := flag.Int("b", 2, "number of candidates")
-	kFlag := flag.Int("k", 2, "number of delegates")
-	TFlag := flag.Int("T", 3, "number of periods (always odd)")
+	nFlag := flag.Int("n", 100, "number of voters")
+	bFlag := flag.Int("b", 5, "number of candidates")
+	kFlag := flag.Int("k", 5, "number of delegates")
+	TFlag := flag.Int("T", 5, "number of periods (always odd)")
 	NFlag := flag.Int("N", 3, "number of decryptors")
 	flag.Parse()
 
@@ -112,8 +112,8 @@ func main() {
 	check(err)
 
 	// Generate some keys for the receiver (target party)
-	kgen := rlwe.NewKeyGenerator(params)
-	tsk, _ := kgen.GenKeyPairNew()
+	// kgen := rlwe.NewKeyGenerator(params)
+	// tsk, _ := kgen.GenKeyPairNew()
 
 	// Create the N input parties and generate their secret keys
 	P := genparties(params, N)
@@ -130,6 +130,7 @@ func main() {
 		elapsedRKGCloud+elapsedCKGCloud, elapsedRKGParty+elapsedCKGParty)
 
 	cks, err := multiparty.NewKeySwitchProtocol(params, ring.DiscreteGaussian{})
+	must(err)
 
 	/******************************************/
 
@@ -265,7 +266,7 @@ func main() {
 	RecordCiphertexts("wCiphertexts", wCiphertexts)
 
 	// 3.2 - Lagrange interpolation I(x > T/2)
-	decryptor := bgv.NewDecryptor(params, tsk) // CHANGED TO TSK FOR MULTIPARTY CASE
+	// decryptor := bgv.NewDecryptor(params, tsk) // COMMENTED OUT FOR MULTIPARTY CASE
 	phIndicator := StartPhase("3.2-lagrange-indicator")
 	indicatorCoeffs := lagrangeIndicatorCoefficients(T, params.PlaintextModulus())
 	indicatorDegree := len(indicatorCoeffs) - 1
@@ -280,8 +281,8 @@ func main() {
 		wCiphertexts[i] = must1(polyEval.Evaluate(ct, bgvpoly.NewPolynomial(indicatorCoeffs), params.DefaultScale()))
 	}
 	phIndicator.Stop()
-	mp_verifyIndicatorCiphertexts("t after indicator", decryptor, encoder, params, layout, blockSize, b, t, tCiphertexts, T, &cks, P)
-	mp_verifyIndicatorCiphertexts("w after indicator", decryptor, encoder, params, layout, blockSize, k, w, wCiphertexts, T, &cks, P)
+	mp_verifyIndicatorCiphertexts("t after indicator", encoder, params, layout, blockSize, b, t, tCiphertexts, T, &cks, P)
+	mp_verifyIndicatorCiphertexts("w after indicator", encoder, params, layout, blockSize, k, w, wCiphertexts, T, &cks, P)
 
 	// 3.3 - Computing the delegating indicator vector
 	phDTilde := StartPhase("3.3-dTilde")
@@ -316,7 +317,7 @@ func main() {
 	}
 	phDTilde.Stop()
 	RecordCiphertexts("dTildeCiphertexts", dTildeCiphertexts)
-	mp_verifyBaseSlotCiphertexts("dTilde", decryptor, encoder, params, layout, blockSize, delegationIndicatorPlain(w, n, k, T), dTildeCiphertexts, &cks, P)
+	mp_verifyBaseSlotCiphertexts("dTilde", encoder, params, layout, blockSize, delegationIndicatorPlain(w, n, k, T), dTildeCiphertexts, &cks, P)
 
 	// 3.4 - Aggregate row of w
 	phSupport := StartPhase("3.4-delegate-support")
@@ -354,7 +355,7 @@ func main() {
 	ctDelegateSupport = must1(evaluator.MulNew(ctDelegateSupport, ptDelegateMask))
 	phSupport.Stop()
 	RecordCiphertexts("ctDelegateSupport", []*rlwe.Ciphertext{ctDelegateSupport})
-	mp_verifyLeadingSlotsCiphertext("delegate support", decryptor, encoder, params, delegateSupportPlain(w, n, k, T), ctDelegateSupport, &cks, P)
+	mp_verifyLeadingSlotsCiphertext("delegate support", encoder, params, delegateSupportPlain(w, n, k, T), ctDelegateSupport, &cks, P)
 
 	// 3.5 - Compute the voter weights votWeights = Dw + dTilde
 	// Precompute one-hot target mask plaintexts indexed by local voter position within a ciphertext.
@@ -409,8 +410,8 @@ func main() {
 			expectedDw[i] += D[i][l] * delegateSupport[l]
 		}
 	}
-	mp_verifyBaseSlotCiphertexts("encrypted D w_d", decryptor, encoder, params, layout, blockSize, expectedDw, dwCiphertexts, &cks, P)
-	mp_verifyBaseSlotCiphertexts("Dw_d + dTilde", decryptor, encoder, params, layout, blockSize, delegatedVoterWeightsPlain(D, w, n, k, T), voterWeightCiphertexts, &cks, P)
+	mp_verifyBaseSlotCiphertexts("encrypted D w_d", encoder, params, layout, blockSize, expectedDw, dwCiphertexts, &cks, P)
+	mp_verifyBaseSlotCiphertexts("Dw_d + dTilde", encoder, params, layout, blockSize, delegatedVoterWeightsPlain(D, w, n, k, T), voterWeightCiphertexts, &cks, P)
 
 	// 3.6 - Product of t and w
 	phTally := StartPhase("3.6-tally")
@@ -452,11 +453,14 @@ func main() {
 	// 4. Decrypt and verify against plaintext reference.
 	phDecrypt := StartPhase("4-decrypt-final")
 	CountOp("DecryptNew")
-	ptResult := decryptor.DecryptNew(ctResult)
+	// ptResult := decryptor.DecryptNew(ctResult)
+	ptResult := thresholdDecrypt(ctResult, P, &cks, params)
 	decoded := make([]uint64, params.MaxSlots())
 	CountOp("Decode")
 	must(encoder.Decode(ptResult, decoded))
+	// decoded := append([]uint64(nil), slots[:b]...)
 	phDecrypt.Stop()
 	fmt.Println("decrypted final tally =", decoded[:b])
-	mp_verifyLeadingSlotsCiphertext("final tally", decryptor, encoder, params, delegatedMaskedTallyPlain(D, w, t, n, b, k, T), ctResult, &cks, P)
+
+	mp_verifyLeadingSlotsCiphertext("final tally", encoder, params, delegatedMaskedTallyPlain(D, w, t, n, b, k, T), ctResult, &cks, P)
 }

@@ -235,7 +235,6 @@ func verifyBaseSlotCiphertexts(
 
 /****** ADDED FOR MULTIPARY CASE ******/
 func mp_decodePackedBlocks(
-	decryptor *rlwe.Decryptor,
 	encoder *bgv.Encoder,
 	params bgv.Parameters,
 	layout packingLayout,
@@ -264,7 +263,6 @@ func mp_decodePackedBlocks(
 
 func mp_verifyIndicatorCiphertexts(
 	label string,
-	decryptor *rlwe.Decryptor,
 	encoder *bgv.Encoder,
 	params bgv.Parameters,
 	layout packingLayout,
@@ -276,7 +274,7 @@ func mp_verifyIndicatorCiphertexts(
 	cks *multiparty.KeySwitchProtocol,
 	parties []party,
 ) {
-	decoded := mp_decodePackedBlocks(decryptor, encoder, params, layout, blockSize, fieldWidth, len(values), ciphertexts, cks, parties)
+	decoded := mp_decodePackedBlocks(encoder, params, layout, blockSize, fieldWidth, len(values), ciphertexts, cks, parties)
 	expected := indicatorVectorPlain(values, T)
 	assert(len(decoded) == len(expected), fmt.Sprintf("%s length mismatch: expected %d, got %d", label, len(expected), len(decoded)))
 	for i := range expected {
@@ -286,7 +284,6 @@ func mp_verifyIndicatorCiphertexts(
 }
 
 func mp_decodeLeadingSlots(
-	decryptor *rlwe.Decryptor,
 	encoder *bgv.Encoder,
 	params bgv.Parameters,
 	slotCount int,
@@ -303,7 +300,6 @@ func mp_decodeLeadingSlots(
 
 func mp_verifyLeadingSlotsCiphertext(
 	label string,
-	decryptor *rlwe.Decryptor,
 	encoder *bgv.Encoder,
 	params bgv.Parameters,
 	expected []uint64,
@@ -311,7 +307,7 @@ func mp_verifyLeadingSlotsCiphertext(
 	cks *multiparty.KeySwitchProtocol,
 	parties []party,
 ) {
-	decoded := mp_decodeLeadingSlots(decryptor, encoder, params, len(expected), ciphertext, cks, parties)
+	decoded := mp_decodeLeadingSlots(encoder, params, len(expected), ciphertext, cks, parties)
 	assert(len(decoded) == len(expected), fmt.Sprintf("%s length mismatch: expected %d, got %d", label, len(expected), len(decoded)))
 	for i := range expected {
 		assert(decoded[i] == expected[i], fmt.Sprintf("%s mismatch at index %d: expected %d, got %d", label, i, expected[i], decoded[i]))
@@ -320,7 +316,6 @@ func mp_verifyLeadingSlotsCiphertext(
 }
 
 func mp_decodeBaseSlotVector(
-	decryptor *rlwe.Decryptor,
 	encoder *bgv.Encoder,
 	params bgv.Parameters,
 	layout packingLayout,
@@ -348,7 +343,6 @@ func mp_decodeBaseSlotVector(
 
 func mp_verifyBaseSlotCiphertexts(
 	label string,
-	decryptor *rlwe.Decryptor,
 	encoder *bgv.Encoder,
 	params bgv.Parameters,
 	layout packingLayout,
@@ -358,7 +352,7 @@ func mp_verifyBaseSlotCiphertexts(
 	cks *multiparty.KeySwitchProtocol,
 	parties []party,
 ) {
-	decoded := mp_decodeBaseSlotVector(decryptor, encoder, params, layout, blockSize, len(expected), ciphertexts, cks, parties)
+	decoded := mp_decodeBaseSlotVector(encoder, params, layout, blockSize, len(expected), ciphertexts, cks, parties)
 	assert(len(decoded) == len(expected), fmt.Sprintf("%s length mismatch: expected %d, got %d", label, len(expected), len(decoded)))
 	for i := range expected {
 		assert(decoded[i] == expected[i], fmt.Sprintf("%s mismatch at index %d: expected %d, got %d", label, i, expected[i], decoded[i]))
