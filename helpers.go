@@ -281,3 +281,24 @@ func computePackingLayout(voterCount, candidateCount, rowsPerCiphertext, colsPer
 		ciphertextCount:     ceilDiv(totalRows, rowsPerCiphertext),
 	}
 }
+
+// drainOneHot removes one unit from a voter's row of `remaining` and returns
+// the column it came from, or -1 if that row is already empty.
+//
+// `remaining` is a row-major voterCount x width tally: entry (voter, col) is
+// how many of the T periods that voter spends on col, so each row sums to T.
+// The protocol encrypts one choice per period rather than one tally per voter,
+// so each period we drain a single unit and encrypt the resulting one-hot
+// vector; after T periods the encryptions sum back to the original row. The
+// sum does not depend on the order units are drained in, so we simply take the
+// first non-empty column.
+func drainOneHot(remaining []uint64, voter, width int) int {
+	row := remaining[voter*width : (voter+1)*width]
+	for col, left := range row {
+		if left > 0 {
+			row[col]--
+			return col
+		}
+	}
+	return -1
+}

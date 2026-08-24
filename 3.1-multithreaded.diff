@@ -1,0 +1,263 @@
+Multi-threaded variant of phase 3.1 (encrypt-pack).
+
+Restores the voter-sharded version of 3.1: numWorkers = min(NumCPU, n)
+goroutines, each with private Encoder/Encryptor/Evaluator and its own
+partialSums accumulators, merged into the shared Enc(0) ciphertexts after
+the join. Produces the same ciphertexts and the same op counts (2*T*n each
+of Encode / EncryptNew / Add) as the linear version it replaces.
+
+Apply with:  git apply 3.1-multithreaded.diff
+Revert with: git apply -R 3.1-multithreaded.diff
+
+--- a/main.go
++++ b/main.go
+@@ -3,7 +3,9 @@
+ import (
+ 	"flag"
+ 	"fmt"
++	"runtime"
+ 	"runtime/debug"
++	"sync"
+ 
+ 	bgvpoly "github.com/tuneinsight/lattigo/v6/circuits/bgv/polynomial"
+ 	"github.com/tuneinsight/lattigo/v6/core/rlwe"
+@@ -171,60 +173,132 @@
+ 	vRemaining := append([]uint64(nil), v...)
+ 	dRemaining := append([]uint64(nil), d...)
+ 
+-	// Every voter casts one vote and one delegation per period, so this loop
+-	// performs 2*T*n independent fresh encryptions and folds each one into the
+-	// running Enc(0) accumulator for its ciphertext.
+-	//
+-	// Plain linear accumulation. Homomorphic addition consumes no modulus
+-	// levels, and the noise of a sum is the sum of the input noises regardless
+-	// of how the additions are grouped, so neither a balanced tree nor sharding
+-	// changes the result or the noise budget here — only who performs the adds.
+-	// A multi-threaded variant of this phase is kept in 3.1-multithreaded.diff.
+-	slotBuf := make([]uint64, params.MaxSlots())
+-	ptInput := bgv.NewPlaintext(params, params.MaxLevel())
++	// The dominant 3.1 cost is 2*T*n independent fresh encryptions. Sharding by
++	// ciphertext index would cap parallelism at layout.ciphertextCount, which for
++	// typical parameters is 1 (all voters pack into a single ciphertext) — leaving
++	// every core but one idle. Instead we shard by voter across all cores and have
++	// each worker build private partial-sum accumulators (one per ciphertext index
++	// it touches), then merge the partials into the shared accumulators after the
++	// join. Homomorphic addition is associative/commutative and order-independent
++	// in both cost and noise, so summing the same 2*T*n fresh encryptions in any
++	// grouping yields an identical result. vRemaining/dRemaining are indexed by
++	// voter and a voter's whole T-period sequence stays within one worker, so
++	// disjoint voter ranges touch disjoint entries. Encoder/Encryptor/Evaluator
++	// each carry mutable scratch buffers and are not thread-safe, so every worker
++	// builds its own. Op counts are tallied per worker and merged after the join
++	// to avoid lock contention on the metrics recorder in the hot loop.
++	numWorkers := min(runtime.NumCPU(), n)
++	type encCounts struct{ encode, encrypt int64 }
++	counts := make([]encCounts, numWorkers)
++	errs := make([]error, numWorkers)
++	// Per-worker partial accumulators, one partialSums per worker holding one
++	// running sum per ciphertext index. Each worker's adds are tallied inside its
++	// own partialSums and summed after the join.
++	vPartials := make([]partialSums, numWorkers)
++	dPartials := make([]partialSums, numWorkers)
++	// Each voter contributes 2 (v and d) fresh encryptions per period, so the
++	// whole sharded loop performs 2*T*n accumulate calls regardless of packing.
+ 	encProg := NewProgress("3.1-encrypt-pack", int64(2)*int64(T)*int64(n))
++	var wg sync.WaitGroup
++	for wkr := 0; wkr < numWorkers; wkr++ {
++		vPartials[wkr] = newPartialSums(layout.ciphertextCount)
++		dPartials[wkr] = newPartialSums(layout.ciphertextCount)
++		voterLo := wkr * n / numWorkers
++		voterHi := (wkr + 1) * n / numWorkers
++		wg.Add(1)
++		go func(wkr, voterLo, voterHi int) {
++			defer wg.Done()
++			enc := bgv.NewEncoder(params)
++			encr := bgv.NewEncryptor(params, pk)
++			ev := bgv.NewEvaluator(params, evk, true)
++			slotBuf := make([]uint64, params.MaxSlots())
++			ptInput := bgv.NewPlaintext(params, params.MaxLevel())
++			c := &counts[wkr]
++			vPart := &vPartials[wkr]
++			dPart := &dPartials[wkr]
+ 
+-	// accumulate encrypts the current slotBuf and adds it into dst[ctIdx].
+-	accumulate := func(dst []*rlwe.Ciphertext, ctIdx int) {
+-		CountOp("Encode")
+-		must(encoder.Encode(slotBuf, ptInput))
+-		CountOp("EncryptNew")
+-		ct := must1(encryptor.EncryptNew(ptInput))
+-		CountOp("Add")
+-		must(evaluator.Add(dst[ctIdx], ct, dst[ctIdx]))
+-		encProg.Inc()
+-	}
+-
+-	for j := 0; j < n; j++ {
+-		ctIdx := j / layout.votersPerCiphertext
+-		localIdx := j % layout.votersPerCiphertext
+-		rowInCt := localIdx / layout.votersPerRow
+-		voterInRow := localIdx % layout.votersPerRow
+-		blockStart := rowInCt*layout.colsPerCiphertext + voterInRow*blockSize
+-
+-		for period := 0; period < T; period++ {
+-			// slotBuf is kept all-zero between calls, so only the single hot
+-			// slot of this period's one-hot vector is ever set.
+-			vOffset := drainOneHot(vRemaining, j, b)
+-			if vOffset >= 0 {
+-				slotBuf[blockStart+vOffset] = 1
+-			}
+-			accumulate(vCiphertexts, ctIdx)
+-			if vOffset >= 0 {
+-				slotBuf[blockStart+vOffset] = 0
++			// accumulate encrypts the current slotBuf and folds the result into
++			// `into` at ctIdx.
++			accumulate := func(into *partialSums, ctIdx int) error {
++				if err := enc.Encode(slotBuf, ptInput); err != nil {
++					return err
++				}
++				c.encode++
++				ct, err := encr.EncryptNew(ptInput)
++				if err != nil {
++					return err
++				}
++				c.encrypt++
++				if err := into.fold(ev, ctIdx, ct); err != nil {
++					return err
++				}
++				encProg.Inc()
++				return nil
+ 			}
+ 
+-			dOffset := drainOneHot(dRemaining, j, k)
+-			if dOffset >= 0 {
+-				slotBuf[blockStart+dOffset] = 1
++			for j := voterLo; j < voterHi; j++ {
++				ctIdx := j / layout.votersPerCiphertext
++				localIdx := j % layout.votersPerCiphertext
++				rowInCt := localIdx / layout.votersPerRow
++				voterInRow := localIdx % layout.votersPerRow
++				blockStart := rowInCt*layout.colsPerCiphertext + voterInRow*blockSize
++
++				for period := 0; period < T; period++ {
++					// slotBuf is kept all-zero between calls, so only the single
++					// hot slot of this period's one-hot vector is ever set.
++					vOffset := drainOneHot(vRemaining, j, b)
++					if vOffset >= 0 {
++						slotBuf[blockStart+vOffset] = 1
++					}
++					if err := accumulate(vPart, ctIdx); err != nil {
++						errs[wkr] = err
++						return
++					}
++					if vOffset >= 0 {
++						slotBuf[blockStart+vOffset] = 0
++					}
++
++					dOffset := drainOneHot(dRemaining, j, k)
++					if dOffset >= 0 {
++						slotBuf[blockStart+dOffset] = 1
++					}
++					if err := accumulate(dPart, ctIdx); err != nil {
++						errs[wkr] = err
++						return
++					}
++					if dOffset >= 0 {
++						slotBuf[blockStart+dOffset] = 0
++					}
++				}
+ 			}
+-			accumulate(dCiphertexts, ctIdx)
+-			if dOffset >= 0 {
+-				slotBuf[blockStart+dOffset] = 0
+-			}
+-		}
++		}(wkr, voterLo, voterHi)
+ 	}
++	wg.Wait()
+ 	encProg.Finish()
++	for _, err := range errs {
++		must(err)
++	}
++	// Merge each worker's partial sums into the shared Enc(0) base accumulators.
++	// This is the "tree of additions" combine step: cheap (at most one add per
++	// ciphertext index per worker) and single-threaded since it touches shared
++	// state.
++	var totAdd int64
++	for wkr := 0; wkr < numWorkers; wkr++ {
++		totAdd += vPartials[wkr].adds + dPartials[wkr].adds
++		vMerged, err := vPartials[wkr].mergeInto(evaluator, vCiphertexts)
++		must(err)
++		dMerged, err := dPartials[wkr].mergeInto(evaluator, dCiphertexts)
++		must(err)
++		totAdd += vMerged + dMerged
++	}
++	var totEncode, totEncrypt int64
++	for _, c := range counts {
++		totEncode += c.encode
++		totEncrypt += c.encrypt
++	}
++	CountOpN("Encode", int(totEncode))
++	CountOpN("EncryptNew", int(totEncrypt))
++	CountOpN("Add", int(totAdd))
+ 	phEncrypt.Stop()
+ 	RecordCiphertexts("vCiphertexts", vCiphertexts)
+ 	RecordCiphertexts("dCiphertexts", dCiphertexts)
+--- a/helpers.go
++++ b/helpers.go
+@@ -5,7 +5,9 @@
+ 	"encoding/binary"
+ 	"fmt"
+ 
++	"github.com/tuneinsight/lattigo/v6/core/rlwe"
+ 	"github.com/tuneinsight/lattigo/v6/ring"
++	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
+ )
+ 
+ // pickPlaintextModulus returns the smallest NTT-friendly prime t such that
+@@ -301,4 +303,47 @@
+ 		}
+ 	}
+ 	return -1
++}
++
++// partialSums is one worker's private running sum, one entry per ciphertext
++// index of the packing layout. Workers never touch the shared accumulators, so
++// no locking is needed: homomorphic addition is associative and commutative in
++// both result and noise growth, so summing the same fresh encryptions in any
++// grouping yields an identical result.
++type partialSums struct {
++	sums []*rlwe.Ciphertext
++	adds int64
+ }
++
++func newPartialSums(ciphertextCount int) partialSums {
++	return partialSums{sums: make([]*rlwe.Ciphertext, ciphertextCount)}
++}
++
++// fold adds a fresh encryption into the running sum for ctIdx. The first
++// encryption for an index becomes that sum outright, so a worker performs
++// exactly (its encryptions - 1) adds per ciphertext index it touches.
++func (p *partialSums) fold(ev *bgv.Evaluator, ctIdx int, ct *rlwe.Ciphertext) error {
++	if p.sums[ctIdx] == nil {
++		p.sums[ctIdx] = ct
++		return nil
++	}
++	p.adds++
++	return ev.Add(p.sums[ctIdx], ct, p.sums[ctIdx])
++}
++
++// mergeInto folds this worker's sums into the shared Enc(0) accumulators in
++// `dst` and reports how many adds that took. Single-threaded because it
++// touches shared state, but cheap: at most one add per ciphertext index.
++func (p *partialSums) mergeInto(ev *bgv.Evaluator, dst []*rlwe.Ciphertext) (int64, error) {
++	var adds int64
++	for ctIdx, sum := range p.sums {
++		if sum == nil {
++			continue
++		}
++		if err := ev.Add(dst[ctIdx], sum, dst[ctIdx]); err != nil {
++			return adds, err
++		}
++		adds++
++	}
++	return adds, nil
++}
