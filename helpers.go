@@ -144,6 +144,31 @@ func randomVotingVector(rowCount, colCount, T int) []uint64 {
 	return v
 }
 
+// randomVotingPower returns each voter's initial voting power q_i, drawn
+// uniformly from [1, qMax]. qMax=1 yields the unweighted all-ones vector, which
+// reproduces the behaviour of the pipeline before per-voter power was added.
+func randomVotingPower(voterCount, qMax int) []uint64 {
+	assert(voterCount >= 0, "voterCount must be >= 0")
+	assert(qMax > 0, "qMax must be > 0")
+
+	q := make([]uint64, voterCount)
+	for i := range q {
+		q[i] = 1 + randUint64n(uint64(qMax))
+	}
+	return q
+}
+
+// sumUint64 returns the total of v, panicking on overflow so a bad -qmax is
+// caught here rather than as a silent wrap in the plaintext modulus choice.
+func sumUint64(v []uint64) uint64 {
+	var total uint64
+	for _, x := range v {
+		assert(total+x >= total, "sumUint64 overflow")
+		total += x
+	}
+	return total
+}
+
 // weightedRowMaskSumPlain computes column sums of w * I(v > floor(T/2))
 // on flattened n x b matrices (row-major layout).
 func weightedRowMaskSumPlain(wFlat, vFlat []uint64, n, b, T int) []uint64 {

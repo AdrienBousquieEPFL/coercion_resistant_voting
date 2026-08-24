@@ -13,11 +13,12 @@ import (
 
 func main() {
 	// 1.1 - Election size parameters
-	// Example: --n 100 --k 10 --b 4 --T 9 --progress false
+	// Example: --n 100 --k 10 --b 4 --T 9 --qmax 8 --progress false
 	nFlag := flag.Int("n", 100, "number of voters")
 	bFlag := flag.Int("b", 5, "number of candidates")
 	kFlag := flag.Int("k", 5, "number of delegates")
 	TFlag := flag.Int("T", 5, "number of periods (always odd)")
+	qMaxFlag := flag.Int("qmax", 1, "max initial voting power per voter; each q_i is drawn from [1, qmax]")
 	progressFlag := flag.Bool("progress", true, "show progress on stderr")
 	flag.Parse()
 
@@ -25,6 +26,7 @@ func main() {
 	b := *bFlag
 	k := *kFlag
 	T := *TFlag
+	qMax := *qMaxFlag
 	progressEnabled = *progressFlag
 	//D := [][]uint64{{0, 0, 0}, {0, 0, 0}, {0, 0, 1}, {0, 0, 0}, {0, 0, 0}, {1, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 1, 0}}
 	//d := []uint64{0, 0, 1, 0, 0, 9, 0, 0, 2, 0, 0, 5, 1, 0, 3, 1, 0, 8, 1, 0, 1, 0, 1, 1, 1, 0, 2, 2, 0, 6}
@@ -50,17 +52,29 @@ func main() {
 	D := randomDelegationMatrix(n, k)    // delegation matrix of size n x k, where D[i][j] is the delegate index for voter i and delegate j
 	d := randomDelegationVector(n, k, T) // delegation vector packed as a n x k row-major vector
 	v := randomVotingVector(n, b, T)     // voting vector packed as a n x b row-major vector
+	q := randomVotingPower(n, qMax)      // per-voter voting power q_i, one entry per voter
+	// fmt.Println("D=", D)
+	// fmt.Println("d=", d)
+	// fmt.Println("v=", v)
+	// fmt.Println("q=", q)
 	RecordSized("D_matrix", n, int64(k)*8, "n rows of k uint64 (one-hot)")
 	RecordSized("d_vector", 1, int64(n)*int64(k)*8, "flat n*k uint64")
 	RecordSized("t_vector", 1, int64(n)*int64(b)*8, "flat n*b uint64")
+	RecordSized("q_vector", 1, int64(n)*8, "flat n uint64 voting power")
 	phInit.Stop()
 
 	// 2. Parameters and Keys setup
 	phSetup := StartPhase("2-bgv-setup")
+	// Every per-delegate weighted total is bounded by the total voting power in
+	// circulation, so t is picked as the smallest NTT-friendly prime strictly
+	// above sum(q). With qMax=1 this is sum(q)=n, matching the previous bound.
+	qSum := sumUint64(q)
+
 	// Edit these values to experiment with BGV settings.
 	// IMPORTANT: set either (Q, P) OR (LogQ, LogP), not both.
+	const logN = 14
 	paramsLiteral := bgv.ParametersLiteral{
-		LogN: 14, // ring degree N = 2^LogN
+		LogN: logN, // ring degree N = 2^LogN
 
 		// Option A: let Lattigo generate NTT primes from bit-sizes.
 		LogQ: []int{55, 45, 45, 45, 45, 45, 45, 45}, // ciphertext modulus chain
@@ -70,8 +84,8 @@ func main() {
 		// Q: []uint64{...},
 		// P: []uint64{...},
 
-		// Plaintext modulus t: smallest NTT-friendly prime >= n.
-		PlaintextModulus:/* 557_057, */ 65_537,
+		// Plaintext modulus t: smallest NTT-friendly prime > sum(q).
+		PlaintextModulus: pickPlaintextModulus(qSum+1, logN),
 
 		// Secret and error distributions (optional; these are defaults).
 		Xs: ring.Ternary{P: 2.0 / 3.0},
@@ -96,7 +110,9 @@ func main() {
 	fmt.Println("Ring type =", params.RingType())
 	fmt.Println("Slots =", params.MaxSlots())
 	fmt.Println("Dimensions =", params.MaxDimensions())
-	assert(uint64(n) <= params.PlaintextModulus(), "n must be <= plaintext modulus")
+	fmt.Println("Total voting power sum(q) =", qSum)
+	assert(qSum < params.PlaintextModulus(),
+		fmt.Sprintf("sum(q)=%d must be < plaintext modulus t=%d", qSum, params.PlaintextModulus()))
 
 	encoder := bgv.NewEncoder(params)
 	encryptor := bgv.NewEncryptor(params, pk)
@@ -250,17 +266,46 @@ func main() {
 	// 3.3 - Aggregate row of d
 	phSupport := StartPhase("3.3-delegate-support")
 	assert(len(dCiphertexts) > 0, "dCiphertexts must be > 0")
-	ctDelegateSupport := bgv.NewCiphertext(params, 1, dCiphertexts[0].Level())
+
+	// q_ext replicates each voter's power q_i across the k delegation slots of
+	// their block, so the slot-wise product d' * q_ext weights every delegation
+	// choice by the power of the voter casting it. q is public, so this is a
+	// plaintext-ciphertext product: it scales noise but consumes no level.
+	qExtPts := make([]*rlwe.Plaintext, layout.ciphertextCount)
+	for ctIdx := range qExtPts {
+		slots := make([]uint64, params.MaxSlots())
+		votersInCt := min(layout.votersPerCiphertext, n-ctIdx*layout.votersPerCiphertext)
+		for localVoterIdx := 0; localVoterIdx < votersInCt; localVoterIdx++ {
+			blockStart := (localVoterIdx / layout.votersPerRow) * layout.colsPerCiphertext
+			blockStart += (localVoterIdx % layout.votersPerRow) * blockSize
+			power := q[ctIdx*layout.votersPerCiphertext+localVoterIdx]
+			for l := 0; l < k; l++ {
+				slots[blockStart+l] = power
+			}
+		}
+		pt := bgv.NewPlaintext(params, params.MaxLevel())
+		CountOp("Encode")
+		must(encoder.Encode(slots, pt))
+		qExtPts[ctIdx] = pt
+	}
+
+	dWeighted := make([]*rlwe.Ciphertext, len(dCiphertexts))
+	for ctIdx, ct := range dCiphertexts {
+		CountOp("MulNew")
+		dWeighted[ctIdx] = must1(evaluator.MulNew(ct, qExtPts[ctIdx]))
+	}
+
+	ctDelegateSupport := bgv.NewCiphertext(params, 1, dWeighted[0].Level())
 	CountOp("RotateAndAdd")
-	must(evaluator.RotateAndAdd(dCiphertexts[0], blockSize, layout.votersPerRow, ctDelegateSupport))
+	must(evaluator.RotateAndAdd(dWeighted[0], blockSize, layout.votersPerRow, ctDelegateSupport))
 	CountOp("RotateRowsNew")
 	ctRowSwapW := must1(evaluator.RotateRowsNew(ctDelegateSupport))
 	CountOp("AddNew")
 	ctDelegateSupport = must1(evaluator.AddNew(ctDelegateSupport, ctRowSwapW))
-	for i := 1; i < len(dCiphertexts); i++ {
-		ctPartial := bgv.NewCiphertext(params, 1, dCiphertexts[i].Level())
+	for i := 1; i < len(dWeighted); i++ {
+		ctPartial := bgv.NewCiphertext(params, 1, dWeighted[i].Level())
 		CountOp("RotateAndAdd")
-		must(evaluator.RotateAndAdd(dCiphertexts[i], blockSize, layout.votersPerRow, ctPartial))
+		must(evaluator.RotateAndAdd(dWeighted[i], blockSize, layout.votersPerRow, ctPartial))
 		CountOp("RotateRowsNew")
 		ctPartialRowSwap := must1(evaluator.RotateRowsNew(ctPartial))
 		CountOp("AddNew")
@@ -282,10 +327,11 @@ func main() {
 	CountOp("MulNew")
 	ctDelegateSupport = must1(evaluator.MulNew(ctDelegateSupport, ptDelegateMask))
 	phSupport.Stop()
+	RecordCiphertexts("dWeighted", dWeighted)
 	RecordCiphertexts("ctDelegateSupport", []*rlwe.Ciphertext{ctDelegateSupport})
-	verifyLeadingSlotsCiphertext("delegate support", decryptor, encoder, params, delegateSupportPlain(d, n, k, T), ctDelegateSupport)
+	verifyLeadingSlotsCiphertext("delegate support", decryptor, encoder, params, delegateSupportPlain(d, q, n, k, T), ctDelegateSupport)
 
-	// 3.4 - Computing the delegating indicator vector
+	// 3.4 - Computing the weighted self-power vector dTilde * q
 	phDTilde := StartPhase("3.4-dTilde")
 	dTildeCiphertexts := make([]*rlwe.Ciphertext, len(dCiphertexts))
 	for ctIdx, wCt := range dCiphertexts {
@@ -295,6 +341,12 @@ func main() {
 		// slots i..i+k-1, so every voter's base slot holds its k-slot delegation
 		// total; the mask below keeps only those base slots. Relies on the
 		// InnerSum(1, k) Galois keys generated in the setup phase.
+		//
+		// Majority selection leaves at most one nonzero slot per block, so each
+		// inner sum is 0 or 1 and dTilde = 1 - sum is boolean. The mask carries
+		// q_i rather than 1, so the same two multiplications that build 1 - sum
+		// build q_i - q_i*sum = q_i * dTilde_i: a self-delegating voter keeps
+		// their own power, a delegating voter drops to 0. No extra operation.
 		ctRowSums := bgv.NewCiphertext(params, 1, wCt.Level())
 		CountOp("RotateAndAdd")
 		must(evaluator.RotateAndAdd(wCt, 1, k, ctRowSums))
@@ -304,7 +356,7 @@ func main() {
 		for voterIdx := 0; voterIdx < votersInCt; voterIdx++ {
 			slotIdx := (voterIdx / layout.votersPerRow) * layout.colsPerCiphertext
 			slotIdx += (voterIdx % layout.votersPerRow) * blockSize
-			mask[slotIdx] = 1
+			mask[slotIdx] = q[ctIdx*layout.votersPerCiphertext+voterIdx]
 		}
 
 		ptMask := bgv.NewPlaintext(params, params.MaxLevel())
@@ -320,7 +372,7 @@ func main() {
 	}
 	phDTilde.Stop()
 	RecordCiphertexts("dTildeCiphertexts", dTildeCiphertexts)
-	verifyBaseSlotCiphertexts("dTilde", decryptor, encoder, params, layout, blockSize, delegationIndicatorPlain(d, n, k, T), dTildeCiphertexts)
+	verifyBaseSlotCiphertexts("dTilde", decryptor, encoder, params, layout, blockSize, weightedSelfPowerPlain(d, q, n, k, T), dTildeCiphertexts)
 
 	// 3.5 - Compute the voter weights votWeights = Dw + dTilde
 	// Precompute one-hot target mask plaintexts indexed by local voter position within a ciphertext.
@@ -369,14 +421,14 @@ func main() {
 	RecordCiphertexts("voterWeightCiphertexts", voterWeightCiphertexts)
 	// Verification of Dw + dTilde
 	expectedDw := make([]uint64, n)
-	delegateSupport := delegateSupportPlain(d, n, k, T)
+	delegateSupport := delegateSupportPlain(d, q, n, k, T)
 	for i := 0; i < n; i++ {
 		for l := 0; l < k; l++ {
 			expectedDw[i] += D[i][l] * delegateSupport[l]
 		}
 	}
 	verifyBaseSlotCiphertexts("encrypted D w_d", decryptor, encoder, params, layout, blockSize, expectedDw, dwCiphertexts)
-	verifyBaseSlotCiphertexts("Dw_d + dTilde", decryptor, encoder, params, layout, blockSize, delegatedVoterWeightsPlain(D, d, n, k, T), voterWeightCiphertexts)
+	verifyBaseSlotCiphertexts("Dw_d + dTilde", decryptor, encoder, params, layout, blockSize, delegatedVoterWeightsPlain(D, d, q, n, k, T), voterWeightCiphertexts)
 
 	// 3.6 - Product of t and w
 	phTally := StartPhase("3.6-tally")
@@ -424,5 +476,5 @@ func main() {
 	must(encoder.Decode(ptResult, decoded))
 	phDecrypt.Stop()
 	fmt.Println("decrypted final tally =", decoded[:b])
-	verifyLeadingSlotsCiphertext("final tally", decryptor, encoder, params, delegatedMaskedTallyPlain(D, d, v, n, b, k, T), ctResult)
+	verifyLeadingSlotsCiphertext("final tally", decryptor, encoder, params, delegatedMaskedTallyPlain(D, d, v, q, n, b, k, T), ctResult)
 }

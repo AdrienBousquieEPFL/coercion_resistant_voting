@@ -45,23 +45,32 @@ func delegationIndicatorPlain(wFlat []uint64, n, k, T int) []uint64 {
 	return out
 }
 
-func delegatedVoterWeightsPlain(D [][]uint64, wFlat []uint64, n, k, T int) []uint64 {
+// weightedSelfPowerPlain is the plaintext reference for phase 3.4: the boolean
+// self-delegation indicator scaled by each voter's own power, dTilde * q. A
+// self-delegating voter keeps q[i]; a delegating voter drops to 0.
+func weightedSelfPowerPlain(wFlat, q []uint64, n, k, T int) []uint64 {
+	assert(len(q) == n, "len(q) must be n")
+
+	out := delegationIndicatorPlain(wFlat, n, k, T)
+	for i := range out {
+		out[i] *= q[i]
+	}
+
+	return out
+}
+
+// delegatedVoterWeightsPlain mirrors phase 3.5: D * w_d + dTilde. The delegated
+// term carries the q-weighted support from phase 3.3, and the self-power term
+// the q-weighted dTilde from phase 3.4, so every voter weight is expressed in
+// units of voting power.
+func delegatedVoterWeightsPlain(D [][]uint64, wFlat, q []uint64, n, k, T int) []uint64 {
 	assert(len(D) == n, "len(D) must be n")
 	for i := range D {
 		assert(len(D[i]) == k, "len(D[i]) must be k")
 	}
 
-	dTilde := delegationIndicatorPlain(wFlat, n, k, T)
-	delegateSupport := make([]uint64, k)
-	threshold := uint64(T / 2)
-	for i := 0; i < n; i++ {
-		rowOffset := i * k
-		for l := 0; l < k; l++ {
-			if wFlat[rowOffset+l] > threshold {
-				delegateSupport[l]++
-			}
-		}
-	}
+	dTilde := weightedSelfPowerPlain(wFlat, q, n, k, T)
+	delegateSupport := delegateSupportPlain(wFlat, q, n, k, T)
 
 	out := make([]uint64, n)
 	for i := 0; i < n; i++ {
@@ -74,11 +83,16 @@ func delegatedVoterWeightsPlain(D [][]uint64, wFlat []uint64, n, k, T int) []uin
 	return out
 }
 
-func delegateSupportPlain(wFlat []uint64, n, k, T int) []uint64 {
+// delegateSupportPlain sums the power delegated to each delegate: every voter
+// contributes their own power q[i] to the delegate they selected, so this is the
+// plaintext reference for the d' * q_ext weighting followed by the rotate-and-add
+// reduction in phase 3.3.
+func delegateSupportPlain(wFlat, q []uint64, n, k, T int) []uint64 {
 	assert(n >= 0, "n must be >= 0")
 	assert(k > 0, "k must be > 0")
 	assert(T > 0, "T must be > 0")
 	assert(len(wFlat) == n*k, "len(wFlat) must be n*k")
+	assert(len(q) == n, "len(q) must be n")
 
 	out := make([]uint64, k)
 	threshold := uint64(T / 2)
@@ -86,7 +100,7 @@ func delegateSupportPlain(wFlat []uint64, n, k, T int) []uint64 {
 		rowOffset := i * k
 		for l := 0; l < k; l++ {
 			if wFlat[rowOffset+l] > threshold {
-				out[l]++
+				out[l] += q[i]
 			}
 		}
 	}
@@ -94,10 +108,10 @@ func delegateSupportPlain(wFlat []uint64, n, k, T int) []uint64 {
 	return out
 }
 
-func delegatedMaskedTallyPlain(D [][]uint64, wFlat, tFlat []uint64, n, b, k, T int) []uint64 {
+func delegatedMaskedTallyPlain(D [][]uint64, wFlat, tFlat, q []uint64, n, b, k, T int) []uint64 {
 	assert(len(tFlat) == n*b, "len(tFlat) must be n*b")
 
-	voterWeights := delegatedVoterWeightsPlain(D, wFlat, n, k, T)
+	voterWeights := delegatedVoterWeightsPlain(D, wFlat, q, n, k, T)
 	out := make([]uint64, b)
 	threshold := uint64(T / 2)
 	for i := 0; i < n; i++ {
