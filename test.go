@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/tuneinsight/lattigo/v6/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/multiparty"
 	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
 )
 
@@ -239,6 +240,133 @@ func verifyBaseSlotCiphertexts(
 	ciphertexts []*rlwe.Ciphertext,
 ) {
 	decoded := decodeBaseSlotVector(decryptor, encoder, params, layout, blockSize, len(expected), ciphertexts)
+	assert(len(decoded) == len(expected), fmt.Sprintf("%s length mismatch: expected %d, got %d", label, len(expected), len(decoded)))
+	for i := range expected {
+		assert(decoded[i] == expected[i], fmt.Sprintf("%s mismatch at index %d: expected %d, got %d", label, i, expected[i], decoded[i]))
+	}
+	log.Printf("ASSERT PASSED: %s", label)
+}
+
+/****** ADDED FOR MULTIPARY CASE ******/
+func mp_decodePackedBlocks(
+	encoder *bgv.Encoder,
+	params bgv.Parameters,
+	layout packingLayout,
+	blockSize int,
+	fieldWidth int,
+	totalValues int,
+	ciphertexts []*rlwe.Ciphertext,
+	cks *multiparty.KeySwitchProtocol,
+	parties []party,
+) []uint64 {
+	decoded := make([]uint64, 0, totalValues)
+	for _, ct := range ciphertexts {
+		pt := thresholdDecrypt(ct, parties, cks, params)
+		slots := make([]uint64, params.MaxSlots())
+		must(encoder.Decode(pt, slots))
+		for row := 0; row < layout.rowsPerCiphertext && len(decoded) < totalValues; row++ {
+			rowBase := row * layout.colsPerCiphertext
+			for voter := 0; voter < layout.votersPerRow && len(decoded) < totalValues; voter++ {
+				blockStart := rowBase + voter*blockSize
+				decoded = append(decoded, slots[blockStart:blockStart+fieldWidth]...)
+			}
+		}
+	}
+	return decoded
+}
+
+func mp_verifyIndicatorCiphertexts(
+	label string,
+	encoder *bgv.Encoder,
+	params bgv.Parameters,
+	layout packingLayout,
+	blockSize int,
+	fieldWidth int,
+	values []uint64,
+	ciphertexts []*rlwe.Ciphertext,
+	T int,
+	cks *multiparty.KeySwitchProtocol,
+	parties []party,
+) {
+	decoded := mp_decodePackedBlocks(encoder, params, layout, blockSize, fieldWidth, len(values), ciphertexts, cks, parties)
+	expected := indicatorVectorPlain(values, T)
+	assert(len(decoded) == len(expected), fmt.Sprintf("%s length mismatch: expected %d, got %d", label, len(expected), len(decoded)))
+	for i := range expected {
+		assert(decoded[i] == expected[i], fmt.Sprintf("%s mismatch at index %d: expected %d, got %d", label, i, expected[i], decoded[i]))
+	}
+	log.Printf("ASSERT PASSED: %s", label)
+}
+
+func mp_decodeLeadingSlots(
+	encoder *bgv.Encoder,
+	params bgv.Parameters,
+	slotCount int,
+	ciphertext *rlwe.Ciphertext,
+	cks *multiparty.KeySwitchProtocol,
+	parties []party,
+) []uint64 {
+	pt := thresholdDecrypt(ciphertext, parties, cks, params)
+	slots := make([]uint64, params.MaxSlots())
+	must(encoder.Decode(pt, slots))
+	decoded := append([]uint64(nil), slots[:slotCount]...)
+	return decoded
+}
+
+func mp_verifyLeadingSlotsCiphertext(
+	label string,
+	encoder *bgv.Encoder,
+	params bgv.Parameters,
+	expected []uint64,
+	ciphertext *rlwe.Ciphertext,
+	cks *multiparty.KeySwitchProtocol,
+	parties []party,
+) {
+	decoded := mp_decodeLeadingSlots(encoder, params, len(expected), ciphertext, cks, parties)
+	assert(len(decoded) == len(expected), fmt.Sprintf("%s length mismatch: expected %d, got %d", label, len(expected), len(decoded)))
+	for i := range expected {
+		assert(decoded[i] == expected[i], fmt.Sprintf("%s mismatch at index %d: expected %d, got %d", label, i, expected[i], decoded[i]))
+	}
+	log.Printf("ASSERT PASSED: %s", label)
+}
+
+func mp_decodeBaseSlotVector(
+	encoder *bgv.Encoder,
+	params bgv.Parameters,
+	layout packingLayout,
+	blockSize int,
+	valueCount int,
+	ciphertexts []*rlwe.Ciphertext,
+	cks *multiparty.KeySwitchProtocol,
+	parties []party,
+) []uint64 {
+	decoded := make([]uint64, 0, valueCount)
+	for _, ct := range ciphertexts {
+		pt := thresholdDecrypt(ct, parties, cks, params)
+		slots := make([]uint64, params.MaxSlots())
+		must(encoder.Decode(pt, slots))
+		for row := 0; row < layout.rowsPerCiphertext && len(decoded) < valueCount; row++ {
+			rowBase := row * layout.colsPerCiphertext
+			for voter := 0; voter < layout.votersPerRow && len(decoded) < valueCount; voter++ {
+				blockStart := rowBase + voter*blockSize
+				decoded = append(decoded, slots[blockStart])
+			}
+		}
+	}
+	return decoded
+}
+
+func mp_verifyBaseSlotCiphertexts(
+	label string,
+	encoder *bgv.Encoder,
+	params bgv.Parameters,
+	layout packingLayout,
+	blockSize int,
+	expected []uint64,
+	ciphertexts []*rlwe.Ciphertext,
+	cks *multiparty.KeySwitchProtocol,
+	parties []party,
+) {
+	decoded := mp_decodeBaseSlotVector(encoder, params, layout, blockSize, len(expected), ciphertexts, cks, parties)
 	assert(len(decoded) == len(expected), fmt.Sprintf("%s length mismatch: expected %d, got %d", label, len(expected), len(decoded)))
 	for i := range expected {
 		assert(decoded[i] == expected[i], fmt.Sprintf("%s mismatch at index %d: expected %d, got %d", label, i, expected[i], decoded[i]))
