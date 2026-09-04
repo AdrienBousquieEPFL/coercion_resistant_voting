@@ -27,17 +27,19 @@ import (
 // runMeta is serialized to meta.json. It captures every parameter needed to
 // reproduce a run and to interpret the other CSVs against fixed inputs.
 type runMeta struct {
-	RunID     string         `json:"run_id"`
-	StartedAt string         `json:"started_at"`
-	N         int            `json:"n"`
-	B         int            `json:"b"`
-	K         int            `json:"k"`
-	T         int            `json:"T"`
-	BGV       *bgvParamsMeta `json:"bgv,omitempty"`
-	GitSHA    string         `json:"git_sha"`
-	Hostname  string         `json:"hostname"`
-	GoVersion string         `json:"go_version"`
-	NumCPU    int            `json:"num_cpu"`
+	RunID               string         `json:"run_id"`
+	StartedAt           string         `json:"started_at"`
+	N                   int            `json:"n"`
+	B                   int            `json:"b"`
+	K                   int            `json:"k"`
+	T                   int            `json:"T"`
+	EchoMode            string         `json:"echo_mode"`
+	EchoRefreshInterval int            `json:"echo_refresh_interval"`
+	BGV                 *bgvParamsMeta `json:"bgv,omitempty"`
+	GitSHA              string         `json:"git_sha"`
+	Hostname            string         `json:"hostname"`
+	GoVersion           string         `json:"go_version"`
+	NumCPU              int            `json:"num_cpu"`
 }
 
 // bgvParamsMeta captures the BGV/RLWE parameters chosen for a run. These are

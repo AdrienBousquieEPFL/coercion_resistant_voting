@@ -9,6 +9,7 @@ import (
 	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 
 	"github.com/tuneinsight/lattigo/v6/multiparty"
+	"github.com/tuneinsight/lattigo/v6/multiparty/mpbgv"
 	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
 	"github.com/tuneinsight/lattigo/v6/utils/sampling"
 )
@@ -79,6 +80,48 @@ func thresholdDecrypt(
 	pt.Value.CopyLvl(level, out.Value[0])
 
 	return pt
+}
+
+// collectiveRefresh executes Lattigo's multiparty BGV refresh protocol under
+// the same collective secret key. It restores a correctly decrypting
+// ciphertext to the maximum Q level without reconstructing its plaintext at
+// the tallying party.
+//
+// params.Xe() matches the noise distribution used by the current prototype and
+// Lattigo's mpbgv refresh tests. A deployment must choose the protocol's noise-
+// flooding distribution as part of its concrete multiparty security analysis.
+func collectiveRefresh(
+	ct *rlwe.Ciphertext,
+	parties []party,
+	params bgv.Parameters,
+	crs sampling.PRNG,
+) *rlwe.Ciphertext {
+	assert(len(parties) > 0, "collective refresh requires at least one party")
+
+	refresh := must1(mpbgv.NewRefreshProtocol(params, params.Xe()))
+	inputLevel := ct.Level()
+	outputLevel := params.MaxLevel()
+	crp := refresh.SampleCRP(outputLevel, crs)
+
+	shares := make([]multiparty.RefreshShare, len(parties))
+	for i := range parties {
+		shares[i] = refresh.AllocateShare(inputLevel, outputLevel)
+		CountOp("RefreshGenShare")
+		must(refresh.GenShare(parties[i].sk, ct, crp, &shares[i]))
+	}
+
+	combined := shares[0]
+	for i := 1; i < len(shares); i++ {
+		CountOp("RefreshAggregateShare")
+		must(refresh.AggregateShares(shares[i], combined, &combined))
+	}
+
+	out := bgv.NewCiphertext(params, 1, outputLevel)
+	*out.MetaData = *ct.MetaData
+	CountOp("RefreshFinalize")
+	must(refresh.Finalize(ct, crp, combined, out))
+	assert(out.Level() == outputLevel, "collective refresh must restore the maximum level")
+	return out
 }
 
 func genparties(params bgv.Parameters, N int) []party {

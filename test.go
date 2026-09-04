@@ -46,7 +46,7 @@ func delegationIndicatorPlain(wFlat []uint64, n, k, T int) []uint64 {
 	return out
 }
 
-// weightedSelfPowerPlain is the plaintext reference for tally phase 4.4: the boolean
+// weightedSelfPowerPlain is the plaintext reference for tally phase 4.5: the boolean
 // self-delegation indicator scaled by each voter's own power, dTilde * q. A
 // self-delegating voter keeps q[i]; a delegating voter drops to 0.
 func weightedSelfPowerPlain(wFlat, q []uint64, n, k, T int) []uint64 {
@@ -61,7 +61,7 @@ func weightedSelfPowerPlain(wFlat, q []uint64, n, k, T int) []uint64 {
 }
 
 // weightedDelegationIndicatorPlain is the direct plaintext reference for the
-// encrypted d' * q_ext product in tally phase 4.3. It preserves the n-by-k row-major
+// encrypted d' * q_ext product in tally phase 4.4. It preserves the n-by-k row-major
 // delegation layout and scales every majority-selected delegation bit by the
 // corresponding voter's q[i].
 func weightedDelegationIndicatorPlain(wFlat, q []uint64, n, k, T int) []uint64 {
@@ -78,9 +78,9 @@ func weightedDelegationIndicatorPlain(wFlat, q []uint64, n, k, T int) []uint64 {
 	return out
 }
 
-// delegatedVoterWeightsPlain mirrors tally phase 4.5: D * w_d + dTilde. The delegated
-// term carries the q-weighted support from phase 4.3, and the self-power term
-// the q-weighted dTilde from phase 4.4, so every voter weight is expressed in
+// delegatedVoterWeightsPlain mirrors tally phase 4.6: D * w_d + dTilde. The delegated
+// term carries the q-weighted support from phase 4.4, and the self-power term
+// the q-weighted dTilde from phase 4.5, so every voter weight is expressed in
 // units of voting power.
 func delegatedVoterWeightsPlain(D [][]uint64, wFlat, q []uint64, n, k, T int) []uint64 {
 	assert(len(D) == n, "len(D) must be n")
@@ -105,7 +105,7 @@ func delegatedVoterWeightsPlain(D [][]uint64, wFlat, q []uint64, n, k, T int) []
 // delegateSupportPlain sums the power delegated to each delegate: every voter
 // contributes their own power q[i] to the delegate they selected, so this is the
 // plaintext reference for the d' * q_ext weighting followed by the rotate-and-add
-// reduction in tally phase 4.3.
+// reduction in tally phase 4.4.
 func delegateSupportPlain(wFlat, q []uint64, n, k, T int) []uint64 {
 	assert(n >= 0, "n must be >= 0")
 	assert(k > 0, "k must be > 0")

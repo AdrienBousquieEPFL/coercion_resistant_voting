@@ -24,6 +24,8 @@ func main() {
 	qMaxFlag := flag.Int("qmax", 1, "max initial voting power per voter; each q_i is drawn from [1, qmax]")
 	progressFlag := flag.Bool("progress", true, "show progress on stderr")
 	NFlag := flag.Int("N", 3, "number of decryptors")
+	echoModeFlag := flag.String("echo-mode", "tree", "periodic echo evaluation: tree or sequential")
+	echoRefreshIntervalFlag := flag.Int("echo-refresh-interval", 1, "sequential echo transitions between collective refreshes")
 	flag.Parse()
 
 	n := *nFlag
@@ -33,11 +35,26 @@ func main() {
 	qMax := *qMaxFlag
 	progressEnabled = *progressFlag
 	N := *NFlag
+	echoMode := *echoModeFlag
+	echoRefreshInterval := *echoRefreshIntervalFlag
+	assert(echoMode == "tree" || echoMode == "sequential", "echo-mode must be tree or sequential")
+	assert(echoRefreshInterval > 0, "echo-refresh-interval must be > 0")
+	if echoMode == "tree" {
+		// The interval controls only intermediate refreshes in sequential mode.
+		echoRefreshInterval = 0
+	}
 	//D := [][]uint64{{0, 0, 0}, {0, 0, 0}, {0, 0, 1}, {0, 0, 0}, {0, 0, 0}, {1, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 1, 0}}
 	//d := []uint64{0, 0, 1, 0, 0, 9, 0, 0, 2, 0, 0, 5, 1, 0, 3, 1, 0, 8, 1, 0, 1, 0, 1, 1, 1, 0, 2, 2, 0, 6}
 	//v := []uint64{2, 7, 1, 8, 7, 2, 8, 1, 6, 3, 2, 7, 3, 6, 1, 8, 6, 3, 5, 4}
 
-	InitMetrics(runMeta{N: n, B: b, K: k, T: T})
+	InitMetrics(runMeta{
+		N:                   n,
+		B:                   b,
+		K:                   k,
+		T:                   T,
+		EchoMode:            echoMode,
+		EchoRefreshInterval: echoRefreshInterval,
+	})
 	defer func() {
 		if r := recover(); r != nil {
 			RecordCrash(r, debug.Stack())
@@ -54,17 +71,30 @@ func main() {
 
 	// 1.2 - Random user input
 	phInit := StartPhase("1-init-random-inputs")
-	D := randomDelegationMatrix(n, k)    // delegation matrix of size n x k, where D[i][j] is the delegate index for voter i and delegate j
-	d := randomDelegationVector(n, k, T) // delegation vector packed as a n x k row-major vector
-	v := randomVotingVector(n, b, T)     // voting vector packed as a n x b row-major vector
-	q := randomVotingPower(n, qMax)      // per-voter voting power q_i, one entry per voter
+	D := randomDelegationMatrix(n, k) // delegation matrix of size n x k, where D[i][j] is the delegate index for voter i and delegate j
+
+	// Retain explicit period schedules so the encrypted tally and plaintext
+	// reference can both model periods with no new submission. The initial count
+	// vectors are only simulation seeds for generating those schedules.
+	candidatePeriods := periodicChoicesFromCounts(randomVotingVector(n, b, T), n, b, T)
+	delegationPeriods := periodicChoicesFromCounts(randomDelegationVector(n, k, T), n, k, T)
+	ensureEchoCarryEvent(candidatePeriods)
+	ensureEchoCarryEvent(delegationPeriods)
+
+	// v and d are the effective totals after applying the periodic echo rule.
+	// They are plaintext references only and are never operands in the tally.
+	v := periodicEchoTotalsPlain(candidatePeriods, n, b)
+	d := periodicEchoTotalsPlain(delegationPeriods, n, k)
+	q := randomVotingPower(n, qMax) // per-voter voting power q_i, one entry per voter
 	// fmt.Println("D=", D)
 	// fmt.Println("d=", d)
 	// fmt.Println("v=", v)
 	// fmt.Println("q=", q)
 	RecordSized("D_matrix", n, int64(k)*8, "n rows of k uint64 (one-hot)")
-	RecordSized("d_vector", 1, int64(n)*int64(k)*8, "flat n*k uint64")
-	RecordSized("t_vector", 1, int64(n)*int64(b)*8, "flat n*b uint64")
+	RecordSized("delegation_periods", T, int64(n)*8, "period-major choice indices; -1 means no submission")
+	RecordSized("candidate_periods", T, int64(n)*8, "period-major choice indices; -1 means no submission")
+	RecordSized("d_vector", 1, int64(n)*int64(k)*8, "flat n*k uint64 after plaintext echo simulation")
+	RecordSized("t_vector", 1, int64(n)*int64(b)*8, "flat n*b uint64 after plaintext echo simulation")
 	RecordSized("q_vector", 1, int64(n)*8, "flat n uint64 voting power")
 	phInit.Stop()
 
@@ -120,6 +150,7 @@ func main() {
 	fmt.Println("Slots =", params.MaxSlots())
 	fmt.Println("Dimensions =", params.MaxDimensions())
 	fmt.Println("Total voting power sum(q) =", qSum)
+	fmt.Println("Echo mode =", echoMode, "sequential refresh interval =", echoRefreshInterval)
 	assert(qSum < params.PlaintextModulus(),
 		fmt.Sprintf("sum(q)=%d must be < plaintext modulus t=%d", qSum, params.PlaintextModulus()))
 
@@ -173,7 +204,7 @@ func main() {
 	galEls := rlwe.GaloisElementsForInnerSum(params, b, layout.votersPerRow)
 	galEls = append(galEls, rlwe.GaloisElementsForInnerSum(params, blockSize, layout.votersPerRow)...)
 	// Inner-sum keys for the log-depth reduction of each voter's k delegation slots
-	// in 4.4-dTilde (RotateAndAdd(wCt, 1, k)). This replaces a linear scan of k-1
+	// in 4.5-dTilde (RotateAndAdd(wCt, 1, k)). This replaces a linear scan of k-1
 	// column rotations, so the individual shift-1..k-1 rotation keys are no longer
 	// generated here.
 	galEls = append(galEls, rlwe.GaloisElementsForInnerSum(params, 1, k)...)
@@ -259,41 +290,48 @@ func main() {
 	// 4. Tally. From this boundary onward, the homomorphic computation consumes
 	// the already-prepared encrypted weight state. Plaintext q appears only in
 	// simulation-only verification calls and is never a tally operand.
-	// 4.1 - Aggregate all vote and delegation inputs
-	// Here we simulate an input d and v without the mask z (as we consider all votes have been done correctly and there is no echo mechanism here)
-	// TODO: Add the echo mechanism simulation
-	phEncrypt := StartPhase("4.1-tally-encrypt-pack")
+	// 4.1 - Encrypt and aggregate period inputs and their encrypted range masks.
+	phEncrypt := StartPhase("4.1-tally-period-input-and-range-mask-encryption")
 
 	zeroSlots := make([]uint64, params.MaxSlots())
 	ptZero := bgv.NewPlaintext(params, params.MaxLevel())
 	CountOp("Encode")
 	must(encoder.Encode(zeroSlots, ptZero))
 
-	// Initialize the vector to 0 and encrypt it
-	vCiphertexts := make([]*rlwe.Ciphertext, layout.ciphertextCount)
-	dCiphertexts := make([]*rlwe.Ciphertext, layout.ciphertextCount)
-	for ctIdx := 0; ctIdx < layout.ciphertextCount; ctIdx++ {
-		CountOp("EncryptNew")
-		vCiphertexts[ctIdx] = must1(encryptor.EncryptNew(ptZero))
-		CountOp("EncryptNew")
-		dCiphertexts[ctIdx] = must1(encryptor.EncryptNew(ptZero))
+	newEncryptedPeriodGrid := func() [][]*rlwe.Ciphertext {
+		grid := make([][]*rlwe.Ciphertext, T)
+		for period := range T {
+			grid[period] = make([]*rlwe.Ciphertext, layout.ciphertextCount)
+			for ctIdx := range layout.ciphertextCount {
+				CountOp("EncryptNew")
+				grid[period][ctIdx] = must1(encryptor.EncryptNew(ptZero))
+			}
+		}
+		return grid
 	}
 
-	vRemaining := append([]uint64(nil), v...)
-	dRemaining := append([]uint64(nil), d...)
+	// Each period has four independently encrypted aggregate inputs: candidate
+	// values, candidate range masks, delegation values, and delegation range
+	// masks. An individual range mask has ones only across the submitting
+	// voter's logical width (b or k); common-block padding and all other voter
+	// blocks remain zero.
+	candidatePeriodInputs := newEncryptedPeriodGrid()
+	candidateRangeMaskCiphertexts := newEncryptedPeriodGrid()
+	delegationPeriodInputs := newEncryptedPeriodGrid()
+	delegationRangeMaskCiphertexts := newEncryptedPeriodGrid()
 
-	// Every voter casts one vote and one delegation per period, so this loop
-	// performs 2*T*n independent fresh encryptions and folds each one into the
-	// running Enc(0) accumulator for its ciphertext.
-	// A multi-threaded variant of this phase is kept in 3.1-multithreaded.diff.
 	slotBuf := make([]uint64, params.MaxSlots())
+	rangeMaskBuf := make([]uint64, params.MaxSlots())
 	ptInput := bgv.NewPlaintext(params, params.MaxLevel())
-	encProg := NewProgress("4.1-tally-encrypt-pack", int64(2)*int64(T)*int64(n))
+	inputCount := countPeriodicSubmissions(candidatePeriods) + countPeriodicSubmissions(delegationPeriods)
+	encProg := NewProgress("4.1-tally-period-input-and-range-mask-encryption", int64(2*inputCount))
 
-	// accumulate encrypts the current slotBuf and adds it into dst[ctIdx].
-	accumulate := func(dst []*rlwe.Ciphertext, ctIdx int) {
+	// encryptAndAccumulate encrypts one simulated input or its corresponding
+	// range mask under the collective public key and adds it to the appropriate
+	// period aggregate.
+	encryptAndAccumulate := func(dst []*rlwe.Ciphertext, ctIdx int, slots []uint64) {
 		CountOp("Encode")
-		must(encoder.Encode(slotBuf, ptInput))
+		must(encoder.Encode(slots, ptInput))
 		CountOp("EncryptNew")
 		ct := must1(encryptor.EncryptNew(ptInput))
 		CountOp("Add")
@@ -301,46 +339,220 @@ func main() {
 		encProg.Inc()
 	}
 
-	for j := 0; j < n; j++ {
-		ctIdx := j / layout.votersPerCiphertext
-		localIdx := j % layout.votersPerCiphertext
-		rowInCt := localIdx / layout.votersPerRow
-		voterInRow := localIdx % layout.votersPerRow
-		blockStart := rowInCt*layout.colsPerCiphertext + voterInRow*blockSize
+	for period := range T {
+		for voter := range n {
+			ctIdx := voter / layout.votersPerCiphertext
+			localIdx := voter % layout.votersPerCiphertext
+			rowInCt := localIdx / layout.votersPerRow
+			voterInRow := localIdx % layout.votersPerRow
+			blockStart := rowInCt*layout.colsPerCiphertext + voterInRow*blockSize
 
-		for period := 0; period < T; period++ {
-			// slotBuf is kept all-zero between calls, so only the single hot
-			// slot of this period's one-hot vector is ever set.
-			vOffset := drainOneHot(vRemaining, j, b)
-			if vOffset >= 0 {
-				slotBuf[blockStart+vOffset] = 1
-			}
-			accumulate(vCiphertexts, ctIdx)
-			if vOffset >= 0 {
-				slotBuf[blockStart+vOffset] = 0
+			if choice := candidatePeriods[period][voter]; choice >= 0 {
+				slotBuf[blockStart+choice] = 1
+				encryptAndAccumulate(candidatePeriodInputs[period], ctIdx, slotBuf)
+				slotBuf[blockStart+choice] = 0
+
+				for offset := 0; offset < b; offset++ {
+					rangeMaskBuf[blockStart+offset] = 1
+				}
+				encryptAndAccumulate(candidateRangeMaskCiphertexts[period], ctIdx, rangeMaskBuf)
+				for offset := 0; offset < b; offset++ {
+					rangeMaskBuf[blockStart+offset] = 0
+				}
 			}
 
-			dOffset := drainOneHot(dRemaining, j, k)
-			if dOffset >= 0 {
-				slotBuf[blockStart+dOffset] = 1
-			}
-			accumulate(dCiphertexts, ctIdx)
-			if dOffset >= 0 {
-				slotBuf[blockStart+dOffset] = 0
+			if choice := delegationPeriods[period][voter]; choice >= 0 {
+				slotBuf[blockStart+choice] = 1
+				encryptAndAccumulate(delegationPeriodInputs[period], ctIdx, slotBuf)
+				slotBuf[blockStart+choice] = 0
+
+				for offset := 0; offset < k; offset++ {
+					rangeMaskBuf[blockStart+offset] = 1
+				}
+				encryptAndAccumulate(delegationRangeMaskCiphertexts[period], ctIdx, rangeMaskBuf)
+				for offset := 0; offset < k; offset++ {
+					rangeMaskBuf[blockStart+offset] = 0
+				}
 			}
 		}
 	}
 	encProg.Finish()
 	phEncrypt.Stop()
+
+	flattenPeriodGrid := func(grid [][]*rlwe.Ciphertext) []*rlwe.Ciphertext {
+		flat := make([]*rlwe.Ciphertext, 0, T*layout.ciphertextCount)
+		for period := range grid {
+			flat = append(flat, grid[period]...)
+		}
+		return flat
+	}
+	RecordCiphertexts("candidatePeriodInputs", flattenPeriodGrid(candidatePeriodInputs))
+	RecordCiphertexts("candidateRangeMaskCiphertexts", flattenPeriodGrid(candidateRangeMaskCiphertexts))
+	RecordCiphertexts("delegationPeriodInputs", flattenPeriodGrid(delegationPeriodInputs))
+	RecordCiphertexts("delegationRangeMaskCiphertexts", flattenPeriodGrid(delegationRangeMaskCiphertexts))
+
+	// 4.2 - Apply the encrypted periodic echo recurrence independently to the
+	// candidate and delegation states. The public logical-range vectors below
+	// represent the constant 1 in (1-z^p); they are not per-input range masks.
+	phEcho := StartPhase(fmt.Sprintf("4.2-tally-periodic-echo-%s", echoMode))
+	candidateLogicalRanges := make([][]uint64, layout.ciphertextCount)
+	delegationLogicalRanges := make([][]uint64, layout.ciphertextCount)
+	for ctIdx := range layout.ciphertextCount {
+		candidateLogicalRanges[ctIdx] = make([]uint64, params.MaxSlots())
+		delegationLogicalRanges[ctIdx] = make([]uint64, params.MaxSlots())
+		votersInCt := min(layout.votersPerCiphertext, n-ctIdx*layout.votersPerCiphertext)
+		for localVoterIdx := range votersInCt {
+			blockStart := (localVoterIdx / layout.votersPerRow) * layout.colsPerCiphertext
+			blockStart += (localVoterIdx % layout.votersPerRow) * blockSize
+			for offset := 0; offset < b; offset++ {
+				candidateLogicalRanges[ctIdx][blockStart+offset] = 1
+			}
+			for offset := 0; offset < k; offset++ {
+				delegationLogicalRanges[ctIdx][blockStart+offset] = 1
+			}
+		}
+	}
+
+	buildOneMinusMasks := func(encryptedMasks [][]*rlwe.Ciphertext, logicalRanges [][]uint64) [][]*rlwe.Ciphertext {
+		oneMinusMasks := make([][]*rlwe.Ciphertext, T)
+		for period := range T {
+			oneMinusMasks[period] = make([]*rlwe.Ciphertext, layout.ciphertextCount)
+			for ctIdx := range layout.ciphertextCount {
+				CountOp("MulNew")
+				ctNegMask := must1(evaluator.MulNew(encryptedMasks[period][ctIdx], -1))
+				CountOp("AddNew")
+				oneMinusMasks[period][ctIdx] = must1(evaluator.AddNew(ctNegMask, logicalRanges[ctIdx]))
+			}
+		}
+		return oneMinusMasks
+	}
+
+	mulRelinEcho := func(left, right *rlwe.Ciphertext) *rlwe.Ciphertext {
+		CountOp("MulRelinNew")
+		product := must1(evaluator.MulRelinNew(left, right))
+		assert(product.Level() == min(left.Level(), right.Level()), "scale-invariant echo multiplication must preserve the minimum input level")
+		return product
+	}
+
+	applyPeriodicEchoTree := func(inputs, oneMinusMasks [][]*rlwe.Ciphertext) []*rlwe.Ciphertext {
+		// Each period is represented as an affine transition on (u, total),
+		// and the transitions are composed in a balanced tree. This evaluates
+		// the exact recurrence with logarithmic multiplicative depth.
+		add := func(left, right *rlwe.Ciphertext) *rlwe.Ciphertext {
+			CountOp("AddNew")
+			return must1(evaluator.AddNew(left, right))
+		}
+
+		// A segment maps an incoming state (u, total) to:
+		//
+		//   u'     = a*u + b
+		//   total' = total + c*u + d
+		//
+		// One period has (a,b,c,d)=(1-z,input,1-z,input). If left is
+		// followed by right, their composition is associative and can therefore
+		// be evaluated as a balanced tree.
+		type echoSegment struct {
+			a, b, c, d *rlwe.Ciphertext
+		}
+		compose := func(left, right echoSegment) echoSegment {
+			a := mulRelinEcho(right.a, left.a)
+			b := add(mulRelinEcho(right.a, left.b), right.b)
+			c := add(left.c, mulRelinEcho(right.c, left.a))
+			d := add(add(left.d, right.d), mulRelinEcho(right.c, left.b))
+			return echoSegment{a: a, b: b, c: c, d: d}
+		}
+
+		totals := make([]*rlwe.Ciphertext, layout.ciphertextCount)
+		for ctIdx := range layout.ciphertextCount {
+			var composeRange func(start, end int) echoSegment
+			composeRange = func(start, end int) echoSegment {
+				if start == end {
+					return echoSegment{
+						a: oneMinusMasks[start][ctIdx],
+						b: inputs[start][ctIdx],
+						c: oneMinusMasks[start][ctIdx],
+						d: inputs[start][ctIdx],
+					}
+				}
+				middle := (start + end) / 2
+				return compose(composeRange(start, middle), composeRange(middle+1, end))
+			}
+
+			// The initial state is u^-1=0 and total^-1=0, so the completed
+			// segment's d component is exactly total^(T-1).
+			totals[ctIdx] = composeRange(0, T-1).d
+		}
+
+		return totals
+	}
+
+	applyPeriodicEchoSequential := func(inputs, oneMinusMasks [][]*rlwe.Ciphertext) []*rlwe.Ciphertext {
+		// Literal streaming recurrence:
+		//   u^p = u^(p-1)*(1-z^p) + input^p
+		//   total^p = total^(p-1) + u^p
+		// Only u is refreshed between chunks because it feeds the next
+		// multiplication. The completed total is refreshed by the common final
+		// refresh below.
+		current := make([]*rlwe.Ciphertext, layout.ciphertextCount)
+		totals := make([]*rlwe.Ciphertext, layout.ciphertextCount)
+		for ctIdx := range layout.ciphertextCount {
+			current[ctIdx] = inputs[0][ctIdx].CopyNew()
+			totals[ctIdx] = current[ctIdx].CopyNew()
+		}
+
+		transitionsSinceRefresh := 0
+		for period := 1; period < T; period++ {
+			for ctIdx := range layout.ciphertextCount {
+				carried := mulRelinEcho(current[ctIdx], oneMinusMasks[period][ctIdx])
+				CountOp("AddNew")
+				current[ctIdx] = must1(evaluator.AddNew(carried, inputs[period][ctIdx]))
+				CountOp("Add")
+				must(evaluator.Add(totals[ctIdx], current[ctIdx], totals[ctIdx]))
+			}
+
+			transitionsSinceRefresh++
+			if period < T-1 && transitionsSinceRefresh == echoRefreshInterval {
+				CountOp("SequentialStateRefreshBoundary")
+				for ctIdx := range current {
+					current[ctIdx] = collectiveRefresh(current[ctIdx], P, params, crs)
+				}
+				transitionsSinceRefresh = 0
+			}
+		}
+		return totals
+	}
+
+	candidateOneMinusMasks := buildOneMinusMasks(candidateRangeMaskCiphertexts, candidateLogicalRanges)
+	delegationOneMinusMasks := buildOneMinusMasks(delegationRangeMaskCiphertexts, delegationLogicalRanges)
+	var vCiphertexts, dCiphertexts []*rlwe.Ciphertext
+	if echoMode == "tree" {
+		vCiphertexts = applyPeriodicEchoTree(candidatePeriodInputs, candidateOneMinusMasks)
+		dCiphertexts = applyPeriodicEchoTree(delegationPeriodInputs, delegationOneMinusMasks)
+	} else {
+		vCiphertexts = applyPeriodicEchoSequential(candidatePeriodInputs, candidateOneMinusMasks)
+		dCiphertexts = applyPeriodicEchoSequential(delegationPeriodInputs, delegationOneMinusMasks)
+	}
+
+	// Both strategies return the same encrypted total. Refresh it once before
+	// the shared majority-selection pipeline; tree mode needs this after its
+	// wider circuit, and sequential mode needs it after accumulating all u^p.
+	CountOp("FinalEchoRefreshBoundary")
+	for ctIdx := range layout.ciphertextCount {
+		vCiphertexts[ctIdx] = collectiveRefresh(vCiphertexts[ctIdx], P, params, crs)
+		dCiphertexts[ctIdx] = collectiveRefresh(dCiphertexts[ctIdx], P, params, crs)
+	}
+	phEcho.Stop()
 	RecordCiphertexts("vCiphertexts", vCiphertexts)
 	RecordCiphertexts("dCiphertexts", dCiphertexts)
+	mp_verifyPackedCiphertexts("candidate periodic echo total", encoder, params, layout, blockSize, b, v, vCiphertexts, &cks, P)
+	mp_verifyPackedCiphertexts("delegation periodic echo total", encoder, params, layout, blockSize, k, d, dCiphertexts, &cks, P)
 
-	// 4.2 - Lagrange interpolation I(x > T/2)
+	// 4.3 - Lagrange interpolation I(x > T/2)
 	// decryptor := bgv.NewDecryptor(params, tsk) // COMMENTED OUT FOR MULTIPARTY CASE
-	phIndicator := StartPhase("4.2-tally-lagrange-indicator")
+	phIndicator := StartPhase("4.3-tally-lagrange-indicator")
 	indicatorCoeffs := lagrangeIndicatorCoefficients(T, params.PlaintextModulus())
 	indicatorDegree := len(indicatorCoeffs) - 1
-	indicatorProg := NewProgress("4.2-tally-lagrange-indicator", int64(len(vCiphertexts)+len(dCiphertexts)))
+	indicatorProg := NewProgress("4.3-tally-lagrange-indicator", int64(len(vCiphertexts)+len(dCiphertexts)))
 	for i, ct := range vCiphertexts {
 		CountOp("PolyEvaluate")
 		CountPolyEvalOps(indicatorDegree)
@@ -360,8 +572,8 @@ func main() {
 	mp_verifyIndicatorCiphertexts("t after indicator", encoder, params, layout, blockSize, b, v, vCiphertexts, T, &cks, P)
 	mp_verifyIndicatorCiphertexts("d after indicator", encoder, params, layout, blockSize, k, d, dCiphertexts, T, &cks, P)
 
-	// 4.3 - Aggregate row of d using the prepared encrypted q_ext input
-	phSupport := StartPhase("4.3-tally-delegate-support")
+	// 4.4 - Aggregate row of d using the prepared encrypted q_ext input
+	phSupport := StartPhase("4.4-tally-delegate-support")
 	assert(len(dCiphertexts) > 0, "dCiphertexts must be > 0")
 
 	dWeighted := make([]*rlwe.Ciphertext, len(dCiphertexts))
@@ -426,8 +638,8 @@ func main() {
 	//verifyLeadingSlotsCiphertext("delegate support", decryptor, encoder, params, delegateSupportPlain(d, q, n, k, T), ctDelegateSupport)
 	mp_verifyLeadingSlotsCiphertext("delegate support", encoder, params, delegateSupportPlain(d, q, n, k, T), ctDelegateSupport, &cks, P)
 
-	// 4.4 - Computing the weighted self-power vector dTilde * q
-	phDTilde := StartPhase("4.4-tally-dTilde")
+	// 4.5 - Computing the weighted self-power vector dTilde * q
+	phDTilde := StartPhase("4.5-tally-dTilde")
 	dTildeCiphertexts := make([]*rlwe.Ciphertext, len(dCiphertexts))
 	for ctIdx, wCt := range dCiphertexts {
 		// Sum each voter's k delegation slots into their block's base slot with a
@@ -470,9 +682,9 @@ func main() {
 	//verifyBaseSlotCiphertexts("dTilde", decryptor, encoder, params, layout, blockSize, weightedSelfPowerPlain(d, q, n, k, T), dTildeCiphertexts)
 	mp_verifyBaseSlotCiphertexts("dTilde", encoder, params, layout, blockSize, weightedSelfPowerPlain(d, q, n, k, T), dTildeCiphertexts, &cks, P)
 
-	// 4.5 - Compute the voter weights votWeights = Dw + dTilde
+	// 4.6 - Compute the voter weights votWeights = Dw + dTilde
 	// Precompute one-hot target mask plaintexts indexed by local voter position within a ciphertext.
-	phDw := StartPhase("4.5-tally-Dw+dTilde")
+	phDw := StartPhase("4.6-tally-Dw+dTilde")
 	targetMaskPts := make([]*rlwe.Plaintext, layout.votersPerCiphertext)
 	for localVoterIdx := range layout.votersPerCiphertext {
 		blockStart := (localVoterIdx / layout.votersPerRow) * layout.colsPerCiphertext
@@ -528,8 +740,8 @@ func main() {
 	mp_verifyBaseSlotCiphertexts("encrypted D w_d", encoder, params, layout, blockSize, expectedDw, dwCiphertexts, &cks, P)
 	mp_verifyBaseSlotCiphertexts("Dw_d + dTilde", encoder, params, layout, blockSize, delegatedVoterWeightsPlain(D, d, q, n, k, T), voterWeightCiphertexts, &cks, P)
 
-	// 4.6 - Product of t and w, followed by packed aggregation
-	phTally := StartPhase("4.6-tally-vote-weight-product")
+	// 4.7 - Product of t and w, followed by packed aggregation
+	phTally := StartPhase("4.7-tally-vote-weight-product")
 	assert(layout.ciphertextCount > 0, "ciphertextCount must be > 0")
 	voterWeightExpanded := make([]*rlwe.Ciphertext, len(voterWeightCiphertexts))
 	for i, ct := range voterWeightCiphertexts {

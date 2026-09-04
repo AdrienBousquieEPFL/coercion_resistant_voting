@@ -158,6 +158,98 @@ func randomVotingPower(voterCount, qMax int) []uint64 {
 	return q
 }
 
+// periodicChoicesFromCounts expands a row-major voter-by-choice count vector
+// into a period-major submission schedule. A value of -1 means that the voter
+// submits no new input in that period. Counts are drained in column order; the
+// order is immaterial before echo semantics are introduced, but the returned
+// schedule makes that order explicit for the encrypted periodic update.
+func periodicChoicesFromCounts(counts []uint64, voterCount, width, periods int) [][]int {
+	assert(voterCount >= 0, "voterCount must be >= 0")
+	assert(width > 0, "width must be > 0")
+	assert(periods > 0, "periods must be > 0")
+	assert(len(counts) == voterCount*width, "len(counts) must be voterCount*width")
+
+	remaining := append([]uint64(nil), counts...)
+	choices := make([][]int, periods)
+	for period := range choices {
+		choices[period] = make([]int, voterCount)
+		for voter := range voterCount {
+			choices[period][voter] = drainOneHot(remaining, voter, width)
+		}
+	}
+
+	for _, left := range remaining {
+		assert(left == 0, "input row contains more submissions than periods")
+	}
+	return choices
+}
+
+// ensureEchoCarryEvent guarantees that a simulation with at least two periods
+// contains a no-submission event immediately after a concrete submission. If
+// two adjacent submissions already make the same choice, replacing the second
+// with an echo preserves the effective per-period plaintext totals exactly.
+// The fallback creates a simple choice-then-echo sequence for voter zero.
+func ensureEchoCarryEvent(choices [][]int) {
+	if len(choices) < 2 || len(choices[0]) == 0 {
+		return
+	}
+
+	for voter := range choices[0] {
+		for period := 1; period < len(choices); period++ {
+			if choices[period-1][voter] >= 0 && choices[period][voter] == choices[period-1][voter] {
+				choices[period][voter] = -1
+				return
+			}
+		}
+	}
+
+	choices[0][0] = 0
+	choices[1][0] = -1
+}
+
+// periodicEchoTotalsPlain evaluates the plaintext counterpart of
+// u^p = u^(p-1)*(1-z^p) + input^p and sums every u^p. Each schedule entry is a
+// one-hot choice index, or -1 when the voter submits nothing and their previous
+// value is therefore carried forward.
+func periodicEchoTotalsPlain(choices [][]int, voterCount, width int) []uint64 {
+	assert(voterCount >= 0, "voterCount must be >= 0")
+	assert(width > 0, "width must be > 0")
+	assert(len(choices) > 0, "choices must contain at least one period")
+
+	current := make([]int, voterCount)
+	for voter := range current {
+		current[voter] = -1
+	}
+	out := make([]uint64, voterCount*width)
+
+	for _, periodChoices := range choices {
+		assert(len(periodChoices) == voterCount, "each period must contain one entry per voter")
+		for voter, choice := range periodChoices {
+			assert(choice >= -1 && choice < width, "periodic choice is outside its logical range")
+			if choice >= 0 {
+				current[voter] = choice
+			}
+			if current[voter] >= 0 {
+				out[voter*width+current[voter]]++
+			}
+		}
+	}
+
+	return out
+}
+
+func countPeriodicSubmissions(choices [][]int) int {
+	count := 0
+	for _, periodChoices := range choices {
+		for _, choice := range periodChoices {
+			if choice >= 0 {
+				count++
+			}
+		}
+	}
+	return count
+}
+
 // sumUint64 returns the total of v, panicking on overflow so a bad -qmax is
 // caught here rather than as a silent wrap in the plaintext modulus choice.
 func sumUint64(v []uint64) uint64 {
