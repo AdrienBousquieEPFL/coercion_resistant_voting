@@ -46,7 +46,7 @@ func delegationIndicatorPlain(wFlat []uint64, n, k, T int) []uint64 {
 	return out
 }
 
-// weightedSelfPowerPlain is the plaintext reference for phase 3.4: the boolean
+// weightedSelfPowerPlain is the plaintext reference for tally phase 4.4: the boolean
 // self-delegation indicator scaled by each voter's own power, dTilde * q. A
 // self-delegating voter keeps q[i]; a delegating voter drops to 0.
 func weightedSelfPowerPlain(wFlat, q []uint64, n, k, T int) []uint64 {
@@ -60,9 +60,27 @@ func weightedSelfPowerPlain(wFlat, q []uint64, n, k, T int) []uint64 {
 	return out
 }
 
-// delegatedVoterWeightsPlain mirrors phase 3.5: D * w_d + dTilde. The delegated
-// term carries the q-weighted support from phase 3.3, and the self-power term
-// the q-weighted dTilde from phase 3.4, so every voter weight is expressed in
+// weightedDelegationIndicatorPlain is the direct plaintext reference for the
+// encrypted d' * q_ext product in tally phase 4.3. It preserves the n-by-k row-major
+// delegation layout and scales every majority-selected delegation bit by the
+// corresponding voter's q[i].
+func weightedDelegationIndicatorPlain(wFlat, q []uint64, n, k, T int) []uint64 {
+	assert(len(wFlat) == n*k, "len(wFlat) must be n*k")
+	assert(len(q) == n, "len(q) must be n")
+
+	out := indicatorVectorPlain(wFlat, T)
+	for voter := 0; voter < n; voter++ {
+		for delegate := 0; delegate < k; delegate++ {
+			out[voter*k+delegate] *= q[voter]
+		}
+	}
+
+	return out
+}
+
+// delegatedVoterWeightsPlain mirrors tally phase 4.5: D * w_d + dTilde. The delegated
+// term carries the q-weighted support from phase 4.3, and the self-power term
+// the q-weighted dTilde from phase 4.4, so every voter weight is expressed in
 // units of voting power.
 func delegatedVoterWeightsPlain(D [][]uint64, wFlat, q []uint64, n, k, T int) []uint64 {
 	assert(len(D) == n, "len(D) must be n")
@@ -87,7 +105,7 @@ func delegatedVoterWeightsPlain(D [][]uint64, wFlat, q []uint64, n, k, T int) []
 // delegateSupportPlain sums the power delegated to each delegate: every voter
 // contributes their own power q[i] to the delegate they selected, so this is the
 // plaintext reference for the d' * q_ext weighting followed by the rotate-and-add
-// reduction in phase 3.3.
+// reduction in tally phase 4.3.
 func delegateSupportPlain(wFlat, q []uint64, n, k, T int) []uint64 {
 	assert(n >= 0, "n must be >= 0")
 	assert(k > 0, "k must be > 0")
@@ -290,6 +308,26 @@ func mp_verifyIndicatorCiphertexts(
 ) {
 	decoded := mp_decodePackedBlocks(encoder, params, layout, blockSize, fieldWidth, len(values), ciphertexts, cks, parties)
 	expected := indicatorVectorPlain(values, T)
+	assert(len(decoded) == len(expected), fmt.Sprintf("%s length mismatch: expected %d, got %d", label, len(expected), len(decoded)))
+	for i := range expected {
+		assert(decoded[i] == expected[i], fmt.Sprintf("%s mismatch at index %d: expected %d, got %d", label, i, expected[i], decoded[i]))
+	}
+	log.Printf("ASSERT PASSED: %s", label)
+}
+
+func mp_verifyPackedCiphertexts(
+	label string,
+	encoder *bgv.Encoder,
+	params bgv.Parameters,
+	layout packingLayout,
+	blockSize int,
+	fieldWidth int,
+	expected []uint64,
+	ciphertexts []*rlwe.Ciphertext,
+	cks *multiparty.KeySwitchProtocol,
+	parties []party,
+) {
+	decoded := mp_decodePackedBlocks(encoder, params, layout, blockSize, fieldWidth, len(expected), ciphertexts, cks, parties)
 	assert(len(decoded) == len(expected), fmt.Sprintf("%s length mismatch: expected %d, got %d", label, len(expected), len(decoded)))
 	for i := range expected {
 		assert(decoded[i] == expected[i], fmt.Sprintf("%s mismatch at index %d: expected %d, got %d", label, i, expected[i], decoded[i]))

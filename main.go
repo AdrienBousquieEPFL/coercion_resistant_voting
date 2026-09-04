@@ -143,7 +143,7 @@ func main() {
 
 	// evk := rlwe.NewMemEvaluationKeySet(rlk) // creates the evaluation key from the relinearization key
 
-	fmt.Println("Setup done (cloud: %s, party: %s)",
+	fmt.Printf("Setup done (cloud: %s, party: %s)\n",
 		elapsedRKGCloud+elapsedCKGCloud, elapsedRKGParty+elapsedCKGParty)
 
 	cks, err := multiparty.NewKeySwitchProtocol(params, ring.DiscreteGaussian{})
@@ -173,7 +173,7 @@ func main() {
 	galEls := rlwe.GaloisElementsForInnerSum(params, b, layout.votersPerRow)
 	galEls = append(galEls, rlwe.GaloisElementsForInnerSum(params, blockSize, layout.votersPerRow)...)
 	// Inner-sum keys for the log-depth reduction of each voter's k delegation slots
-	// in 3.4-dTilde (RotateAndAdd(wCt, 1, k)). This replaces a linear scan of k-1
+	// in 4.4-dTilde (RotateAndAdd(wCt, 1, k)). This replaces a linear scan of k-1
 	// column rotations, so the individual shift-1..k-1 rotation keys are no longer
 	// generated here.
 	galEls = append(galEls, rlwe.GaloisElementsForInnerSum(params, 1, k)...)
@@ -203,11 +203,66 @@ func main() {
 	RecordGaloisKeys("galois_keys", gks)
 	RecordSized("galois_elements", len(galEls), 8, "uint64 indices fed to GenGaloisKeysNew")
 
-	// 3. Homomorphic computation.
-	// 3.1 - Aggregate all inputs
+	// 3. Pre-election input preparation.
+	//
+	// q is available here only because this executable locally simulates the
+	// party that prepares the encrypted weight input and later uses q for
+	// plaintext correctness checks. The tally begins below with qExtCiphertexts
+	// and qBaseCiphertexts already encrypted under the collective public key.
+	phWeights := StartPhase("3-pre-election-weight-input-preparation")
+
+	// q_ext replicates each voter's power q_i across the k delegation slots of
+	// their block. It is encrypted once per packed ciphertext under the
+	// collective public key. qBaseCiphertexts is then derived from that same
+	// encryption with a public structural mask, so the two encrypted layouts are
+	// bound to the same weight input without a second encryption.
+	baseSlotMask := make([]uint64, params.MaxSlots())
+	for row := 0; row < layout.rowsPerCiphertext; row++ {
+		rowBase := row * layout.colsPerCiphertext
+		for voter := 0; voter < layout.votersPerRow; voter++ {
+			baseSlotMask[rowBase+voter*blockSize] = 1
+		}
+	}
+	ptBaseSlotMask := bgv.NewPlaintext(params, params.MaxLevel())
+	CountOp("Encode")
+	must(encoder.Encode(baseSlotMask, ptBaseSlotMask))
+
+	qExtCiphertexts := make([]*rlwe.Ciphertext, layout.ciphertextCount)
+	qBaseCiphertexts := make([]*rlwe.Ciphertext, layout.ciphertextCount)
+	for ctIdx := range qExtCiphertexts {
+		slots := make([]uint64, params.MaxSlots())
+		votersInCt := min(layout.votersPerCiphertext, n-ctIdx*layout.votersPerCiphertext)
+		for localVoterIdx := 0; localVoterIdx < votersInCt; localVoterIdx++ {
+			blockStart := (localVoterIdx / layout.votersPerRow) * layout.colsPerCiphertext
+			blockStart += (localVoterIdx % layout.votersPerRow) * blockSize
+			power := q[ctIdx*layout.votersPerCiphertext+localVoterIdx]
+			for l := 0; l < k; l++ {
+				slots[blockStart+l] = power
+			}
+		}
+		pt := bgv.NewPlaintext(params, params.MaxLevel())
+		CountOp("Encode")
+		must(encoder.Encode(slots, pt))
+		CountOp("EncryptNew")
+		qExtCiphertexts[ctIdx] = must1(encryptor.EncryptNew(pt))
+
+		CountOp("MulNew")
+		qBaseCiphertexts[ctIdx] = must1(evaluator.MulNew(qExtCiphertexts[ctIdx], ptBaseSlotMask))
+		assert(qExtCiphertexts[ctIdx].Level() == params.MaxLevel(), "encrypted q_ext must start at max level")
+		assert(qBaseCiphertexts[ctIdx].Level() == qExtCiphertexts[ctIdx].Level(), "base-slot projection must preserve the weight level")
+	}
+	phWeights.Stop()
+	RecordCiphertexts("qExtCiphertexts", qExtCiphertexts)
+	RecordCiphertexts("qBaseCiphertexts", qBaseCiphertexts)
+	mp_verifyBaseSlotCiphertexts("encrypted q base projection", encoder, params, layout, blockSize, q, qBaseCiphertexts, &cks, P)
+
+	// 4. Tally. From this boundary onward, the homomorphic computation consumes
+	// the already-prepared encrypted weight state. Plaintext q appears only in
+	// simulation-only verification calls and is never a tally operand.
+	// 4.1 - Aggregate all vote and delegation inputs
 	// Here we simulate an input d and v without the mask z (as we consider all votes have been done correctly and there is no echo mechanism here)
 	// TODO: Add the echo mechanism simulation
-	phEncrypt := StartPhase("3.1-encrypt-pack")
+	phEncrypt := StartPhase("4.1-tally-encrypt-pack")
 
 	zeroSlots := make([]uint64, params.MaxSlots())
 	ptZero := bgv.NewPlaintext(params, params.MaxLevel())
@@ -233,7 +288,7 @@ func main() {
 	// A multi-threaded variant of this phase is kept in 3.1-multithreaded.diff.
 	slotBuf := make([]uint64, params.MaxSlots())
 	ptInput := bgv.NewPlaintext(params, params.MaxLevel())
-	encProg := NewProgress("3.1-encrypt-pack", int64(2)*int64(T)*int64(n))
+	encProg := NewProgress("4.1-tally-encrypt-pack", int64(2)*int64(T)*int64(n))
 
 	// accumulate encrypts the current slotBuf and adds it into dst[ctIdx].
 	accumulate := func(dst []*rlwe.Ciphertext, ctIdx int) {
@@ -280,12 +335,12 @@ func main() {
 	RecordCiphertexts("vCiphertexts", vCiphertexts)
 	RecordCiphertexts("dCiphertexts", dCiphertexts)
 
-	// 3.2 - Lagrange interpolation I(x > T/2)
+	// 4.2 - Lagrange interpolation I(x > T/2)
 	// decryptor := bgv.NewDecryptor(params, tsk) // COMMENTED OUT FOR MULTIPARTY CASE
-	phIndicator := StartPhase("3.2-lagrange-indicator")
+	phIndicator := StartPhase("4.2-tally-lagrange-indicator")
 	indicatorCoeffs := lagrangeIndicatorCoefficients(T, params.PlaintextModulus())
 	indicatorDegree := len(indicatorCoeffs) - 1
-	indicatorProg := NewProgress("3.2-lagrange-indicator", int64(len(vCiphertexts)+len(dCiphertexts)))
+	indicatorProg := NewProgress("4.2-tally-lagrange-indicator", int64(len(vCiphertexts)+len(dCiphertexts)))
 	for i, ct := range vCiphertexts {
 		CountOp("PolyEvaluate")
 		CountPolyEvalOps(indicatorDegree)
@@ -305,41 +360,34 @@ func main() {
 	mp_verifyIndicatorCiphertexts("t after indicator", encoder, params, layout, blockSize, b, v, vCiphertexts, T, &cks, P)
 	mp_verifyIndicatorCiphertexts("d after indicator", encoder, params, layout, blockSize, k, d, dCiphertexts, T, &cks, P)
 
-	// 3.3 - Aggregate row of d
-	phSupport := StartPhase("3.3-delegate-support")
+	// 4.3 - Aggregate row of d using the prepared encrypted q_ext input
+	phSupport := StartPhase("4.3-tally-delegate-support")
 	assert(len(dCiphertexts) > 0, "dCiphertexts must be > 0")
-
-	// q_ext replicates each voter's power q_i across the k delegation slots of
-	// their block, so the slot-wise product d' * q_ext weights every delegation
-	// choice by the power of the voter casting it. q is public, so this is a
-	// plaintext-ciphertext product: it scales noise but consumes no level.
-	qExtPts := make([]*rlwe.Plaintext, layout.ciphertextCount)
-	for ctIdx := range qExtPts {
-		slots := make([]uint64, params.MaxSlots())
-		votersInCt := min(layout.votersPerCiphertext, n-ctIdx*layout.votersPerCiphertext)
-		for localVoterIdx := 0; localVoterIdx < votersInCt; localVoterIdx++ {
-			blockStart := (localVoterIdx / layout.votersPerRow) * layout.colsPerCiphertext
-			blockStart += (localVoterIdx % layout.votersPerRow) * blockSize
-			power := q[ctIdx*layout.votersPerCiphertext+localVoterIdx]
-			for l := 0; l < k; l++ {
-				slots[blockStart+l] = power
-			}
-		}
-		pt := bgv.NewPlaintext(params, params.MaxLevel())
-		CountOp("Encode")
-		must(encoder.Encode(slots, pt))
-		qExtPts[ctIdx] = pt
-	}
-	// TO CHECK AFTER MERGE
-	// phDTilde.Stop()
-	// RecordCiphertexts("dTildeCiphertexts", dTildeCiphertexts)
-	// mp_verifyBaseSlotCiphertexts("dTilde", encoder, params, layout, blockSize, delegationIndicatorPlain(w, n, k, T), dTildeCiphertexts, &cks, P)
 
 	dWeighted := make([]*rlwe.Ciphertext, len(dCiphertexts))
 	for ctIdx, ct := range dCiphertexts {
-		CountOp("MulNew")
-		dWeighted[ctIdx] = must1(evaluator.MulNew(ct, qExtPts[ctIdx]))
+		CountOp("MulRelinNew")
+		dWeighted[ctIdx] = must1(evaluator.MulRelinNew(ct, qExtCiphertexts[ctIdx]))
+		assert(dWeighted[ctIdx].Level() == min(ct.Level(), qExtCiphertexts[ctIdx].Level()), "encrypted q_ext multiplication must preserve the minimum input level")
 	}
+	fmt.Printf(
+		"Encrypted q_ext levels: weight=%d, delegation-indicator=%d, product-after-relinearization=%d\n",
+		qExtCiphertexts[0].Level(),
+		dCiphertexts[0].Level(),
+		dWeighted[0].Level(),
+	)
+	mp_verifyPackedCiphertexts(
+		"encrypted d' * q_ext",
+		encoder,
+		params,
+		layout,
+		blockSize,
+		k,
+		weightedDelegationIndicatorPlain(d, q, n, k, T),
+		dWeighted,
+		&cks,
+		P,
+	)
 
 	ctDelegateSupport := bgv.NewCiphertext(params, 1, dWeighted[0].Level())
 	CountOp("RotateAndAdd")
@@ -378,8 +426,8 @@ func main() {
 	//verifyLeadingSlotsCiphertext("delegate support", decryptor, encoder, params, delegateSupportPlain(d, q, n, k, T), ctDelegateSupport)
 	mp_verifyLeadingSlotsCiphertext("delegate support", encoder, params, delegateSupportPlain(d, q, n, k, T), ctDelegateSupport, &cks, P)
 
-	// 3.4 - Computing the weighted self-power vector dTilde * q
-	phDTilde := StartPhase("3.4-dTilde")
+	// 4.4 - Computing the weighted self-power vector dTilde * q
+	phDTilde := StartPhase("4.4-tally-dTilde")
 	dTildeCiphertexts := make([]*rlwe.Ciphertext, len(dCiphertexts))
 	for ctIdx, wCt := range dCiphertexts {
 		// Sum each voter's k delegation slots into their block's base slot with a
@@ -389,42 +437,42 @@ func main() {
 		// total; the mask below keeps only those base slots. Relies on the
 		// InnerSum(1, k) Galois keys generated in the setup phase.
 		//
-		// Majority selection leaves at most one nonzero slot per block, so each
-		// inner sum is 0 or 1 and dTilde = 1 - sum is boolean. The mask carries
-		// q_i rather than 1, so the same two multiplications that build 1 - sum
-		// build q_i - q_i*sum = q_i * dTilde_i: a self-delegating voter keeps
-		// their own power, a delegating voter drops to 0. No extra operation.
+		// Majority selection leaves at most one nonzero slot per block. First
+		// compute the encrypted boolean dTilde = 1 - sum at the base slots, using
+		// only the public structural base-slot mask. Then multiply dTilde by the
+		// encrypted base-slot q vector. This avoids adding two ciphertexts with
+		// different invariant-tensoring scales while still computing
+		// q_i*(1-sum): a self-delegating voter keeps their own power, a delegating
+		// voter drops to 0.
 		ctRowSums := bgv.NewCiphertext(params, 1, wCt.Level())
 		CountOp("RotateAndAdd")
 		must(evaluator.RotateAndAdd(wCt, 1, k, ctRowSums))
 
-		mask := make([]uint64, params.MaxSlots())
-		votersInCt := min(layout.votersPerCiphertext, n-ctIdx*layout.votersPerCiphertext)
-		for voterIdx := 0; voterIdx < votersInCt; voterIdx++ {
-			slotIdx := (voterIdx / layout.votersPerRow) * layout.colsPerCiphertext
-			slotIdx += (voterIdx % layout.votersPerRow) * blockSize
-			mask[slotIdx] = q[ctIdx*layout.votersPerCiphertext+voterIdx]
-		}
-
-		ptMask := bgv.NewPlaintext(params, params.MaxLevel())
-		CountOp("Encode")
-		must(encoder.Encode(mask, ptMask))
-
 		CountOp("MulNew")
-		ctBase := must1(evaluator.MulNew(ctRowSums, ptMask))
-		CountOp("MulNew")
-		ctNeg := must1(evaluator.MulNew(ctBase, -1))
+		ctNegRowSums := must1(evaluator.MulNew(ctRowSums, -1))
 		CountOp("AddNew")
-		dTildeCiphertexts[ctIdx] = must1(evaluator.AddNew(ctNeg, ptMask))
+		ctSelfIndicator := must1(evaluator.AddNew(ctNegRowSums, baseSlotMask))
+		CountOp("MulRelinNew")
+		dTildeCiphertexts[ctIdx] = must1(evaluator.MulRelinNew(ctSelfIndicator, qBaseCiphertexts[ctIdx]))
+		assert(dTildeCiphertexts[ctIdx].Level() == min(ctSelfIndicator.Level(), qBaseCiphertexts[ctIdx].Level()), "encrypted base-weight multiplication must preserve the minimum input level")
+		if ctIdx == 0 {
+			fmt.Printf(
+				"Encrypted base-weight levels: weight=%d, delegation-row-sum=%d, self-indicator=%d, product-after-relinearization=%d\n",
+				qBaseCiphertexts[ctIdx].Level(),
+				ctRowSums.Level(),
+				ctSelfIndicator.Level(),
+				dTildeCiphertexts[ctIdx].Level(),
+			)
+		}
 	}
 	phDTilde.Stop()
 	RecordCiphertexts("dTildeCiphertexts", dTildeCiphertexts)
 	//verifyBaseSlotCiphertexts("dTilde", decryptor, encoder, params, layout, blockSize, weightedSelfPowerPlain(d, q, n, k, T), dTildeCiphertexts)
 	mp_verifyBaseSlotCiphertexts("dTilde", encoder, params, layout, blockSize, weightedSelfPowerPlain(d, q, n, k, T), dTildeCiphertexts, &cks, P)
 
-	// 3.5 - Compute the voter weights votWeights = Dw + dTilde
+	// 4.5 - Compute the voter weights votWeights = Dw + dTilde
 	// Precompute one-hot target mask plaintexts indexed by local voter position within a ciphertext.
-	phDw := StartPhase("3.5-Dw+dTilde")
+	phDw := StartPhase("4.5-tally-Dw+dTilde")
 	targetMaskPts := make([]*rlwe.Plaintext, layout.votersPerCiphertext)
 	for localVoterIdx := range layout.votersPerCiphertext {
 		blockStart := (localVoterIdx / layout.votersPerRow) * layout.colsPerCiphertext
@@ -480,8 +528,8 @@ func main() {
 	mp_verifyBaseSlotCiphertexts("encrypted D w_d", encoder, params, layout, blockSize, expectedDw, dwCiphertexts, &cks, P)
 	mp_verifyBaseSlotCiphertexts("Dw_d + dTilde", encoder, params, layout, blockSize, delegatedVoterWeightsPlain(D, d, q, n, k, T), voterWeightCiphertexts, &cks, P)
 
-	// 3.6 - Product of t and w
-	phTally := StartPhase("3.6-tally")
+	// 4.6 - Product of t and w, followed by packed aggregation
+	phTally := StartPhase("4.6-tally-vote-weight-product")
 	assert(layout.ciphertextCount > 0, "ciphertextCount must be > 0")
 	voterWeightExpanded := make([]*rlwe.Ciphertext, len(voterWeightCiphertexts))
 	for i, ct := range voterWeightCiphertexts {
@@ -517,8 +565,8 @@ func main() {
 	RecordCiphertexts("voterWeightExpanded", voterWeightExpanded)
 	RecordCiphertexts("ctResult", []*rlwe.Ciphertext{ctResult})
 
-	// 4. Decrypt and verify against plaintext reference.
-	phDecrypt := StartPhase("4-decrypt-final")
+	// 5. Threshold-decrypt and verify against the plaintext reference.
+	phDecrypt := StartPhase("5-threshold-decrypt-verify")
 	CountOp("DecryptNew")
 	// ptResult := decryptor.DecryptNew(ctResult)
 	ptResult := thresholdDecrypt(ctResult, P, &cks, params)
