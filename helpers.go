@@ -207,14 +207,65 @@ func ensureEchoCarryEvent(choices [][]int) {
 	choices[1][0] = -1
 }
 
+// registrationValidityBits creates one simulated registration-time validity
+// bit per voter and period. Candidate and delegation inputs for that
+// voter-period share this bit. All credentials start valid; targeted scenarios
+// below mark selected credentials invalid for end-to-end testing.
+func registrationValidityBits(periodCount, voterCount int) [][]uint64 {
+	validity := make([][]uint64, periodCount)
+	for period := range periodCount {
+		validity[period] = make([]uint64, voterCount)
+		for voter := range voterCount {
+			validity[period][voter] = 1
+		}
+	}
+	return validity
+}
+
+// addValidityGatingScenario installs a deterministic three-period test case
+// for voter zero: a valid input, an invalid replacement attempt, and a later
+// valid replacement. It lets the end-to-end plaintext and encrypted checks
+// exercise all validity-gating branches on every default run.
+func addValidityGatingScenario(choices [][]int, validity [][]uint64, width int) {
+	if len(choices) < 3 || len(choices[0]) == 0 || width < 2 {
+		return
+	}
+
+	choices[0][0] = 0
+	validity[0][0] = 1
+	choices[1][0] = 1
+	validity[1][0] = 0
+	choices[2][0] = min(2, width-1)
+	validity[2][0] = 1
+}
+
+// verifyValidityGatingScenario checks the deterministic prefix installed by
+// addValidityGatingScenario. The invalid period must echo choice zero, and the
+// following valid period must replace it with the new choice.
+func verifyValidityGatingScenario(choices [][]int, validity [][]uint64, width int) {
+	if len(choices) < 3 || len(choices[0]) == 0 || width < 2 {
+		return
+	}
+
+	assert(choices[0][0] == 0 && validity[0][0] == 1, "validity scenario must start with a valid input")
+	assert(choices[1][0] == 1 && validity[1][0] == 0, "validity scenario must contain an invalid input")
+	replacement := min(2, width-1)
+	assert(choices[2][0] == replacement && validity[2][0] == 1, "validity scenario must contain a later valid input")
+
+	prefixTotals := periodicEchoTotalsPlain(choices[:3], validity[:3], len(choices[0]), width)
+	assert(prefixTotals[0] == 2, "invalid input must echo the previous valid choice")
+	assert(prefixTotals[replacement] == 1, "later valid input must replace the echoed choice")
+}
+
 // periodicEchoTotalsPlain evaluates the plaintext counterpart of
 // u^p = u^(p-1)*(1-z^p) + input^p and sums every u^p. Each schedule entry is a
-// one-hot choice index, or -1 when the voter submits nothing and their previous
-// value is therefore carried forward.
-func periodicEchoTotalsPlain(choices [][]int, voterCount, width int) []uint64 {
+// one-hot choice index, or -1 when the voter submits nothing. A submitted input
+// replaces the current value only when its associated validity bit is one.
+func periodicEchoTotalsPlain(choices [][]int, validity [][]uint64, voterCount, width int) []uint64 {
 	assert(voterCount >= 0, "voterCount must be >= 0")
 	assert(width > 0, "width must be > 0")
 	assert(len(choices) > 0, "choices must contain at least one period")
+	assert(len(validity) == len(choices), "validity must contain one row per period")
 
 	current := make([]int, voterCount)
 	for voter := range current {
@@ -222,11 +273,14 @@ func periodicEchoTotalsPlain(choices [][]int, voterCount, width int) []uint64 {
 	}
 	out := make([]uint64, voterCount*width)
 
-	for _, periodChoices := range choices {
+	for period, periodChoices := range choices {
 		assert(len(periodChoices) == voterCount, "each period must contain one entry per voter")
+		assert(len(validity[period]) == voterCount, "each validity row must contain one entry per voter")
 		for voter, choice := range periodChoices {
 			assert(choice >= -1 && choice < width, "periodic choice is outside its logical range")
-			if choice >= 0 {
+			valid := validity[period][voter]
+			assert(valid <= 1, "validity value must be boolean")
+			if choice >= 0 && valid == 1 {
 				current[voter] = choice
 			}
 			if current[voter] >= 0 {
@@ -236,6 +290,28 @@ func periodicEchoTotalsPlain(choices [][]int, voterCount, width int) []uint64 {
 	}
 
 	return out
+}
+
+// gatedPeriodPlain returns the plaintext payload and logical-range mask after
+// applying the registration validity bits for one period.
+func gatedPeriodPlain(choices []int, validity []uint64, voterCount, width int) (payload, mask []uint64) {
+	assert(len(choices) == voterCount, "period must contain one choice per voter")
+	assert(len(validity) == voterCount, "period must contain one validity bit per voter")
+	payload = make([]uint64, voterCount*width)
+	mask = make([]uint64, voterCount*width)
+	for voter, choice := range choices {
+		assert(choice >= -1 && choice < width, "periodic choice is outside its logical range")
+		bit := validity[voter]
+		assert(bit <= 1, "validity value must be boolean")
+		if choice < 0 {
+			continue
+		}
+		payload[voter*width+choice] = bit
+		for offset := range width {
+			mask[voter*width+offset] = bit
+		}
+	}
+	return
 }
 
 func countPeriodicSubmissions(choices [][]int) int {

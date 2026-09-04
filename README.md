@@ -12,14 +12,19 @@ This Go program simulates the encrypted voting tally with Lattigo and BGV. It:
 The program currently supports:
 
 - encrypted voter weights;
+- one encrypted registration-time validity bit per voter-period, shared by the
+  candidate and delegation inputs;
 - encrypted candidate and delegation range masks;
 - periodic echo updates for missing submissions;
 - tree-based and sequential echo calculations;
 - collective refresh to reduce ciphertext noise;
 - majority selection, delegation, weighted voting, and packed aggregation.
 
-Credential validity is not implemented yet. Therefore, validity bits do not yet
-control whether range masks are included.
+The protocol has voters commit to their validity bits during registration. This
+program simulates those registered bits and encrypts them under the collective
+public key. The tally uses each shared bit to gate both the candidate and
+delegation payloads and their range masks. Invalid inputs have no effect, so the
+echo calculation keeps the previous valid state.
 
 ## Setup
 
