@@ -1,9 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"os"
 	"runtime/debug"
+	"time"
 
 	bgvpoly "github.com/tuneinsight/lattigo/v6/circuits/bgv/polynomial"
 	"github.com/tuneinsight/lattigo/v6/core/rlwe"
@@ -15,6 +18,11 @@ import (
 )
 
 func main() {
+	benchmarkMode := len(os.Args) > 1 && os.Args[1] == "benchmark"
+	if benchmarkMode {
+		os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
+	}
+
 	// 1.1 - Election size parameters
 	// Example: --n 100 --k 10 --b 4 --T 9 --qmax 8 --progress false
 	nFlag := flag.Int("n", 100, "number of voters")
@@ -27,7 +35,21 @@ func main() {
 	echoModeFlag := flag.String("echo-mode", "tree", "periodic echo evaluation: tree or sequential")
 	refreshModeFlag := flag.String("refresh-mode", "collective", "ciphertext refresh strategy: collective or none")
 	echoRefreshIntervalFlag := flag.Int("echo-refresh-interval", 1, "sequential echo transitions between collective refreshes")
+	diagnosticChecksFlag := flag.String("diagnostic-checks", "all", "threshold-decryption checks: all or final")
+	metricsSampleIntervalFlag := flag.Duration("metrics-sample-interval", time.Second, "interval for phase-level CPU and memory samples")
+	parameterProfileFlag := flag.String("parameter-profile", "legacy", "named BGV parameter profile")
+	parameterFileFlag := flag.String("parameter-file", "", "versioned exact-prime parameter JSON; overrides named profile")
+	describeParametersFlag := flag.Bool("describe-parameters", false, "print concrete parameter JSON and exit before key generation")
+	workloadSeedFlag := flag.String("workload-seed", "", "reproducible synthetic workload seed; encryption and keys remain independently random")
+	outputRootFlag := flag.String("output-root", "runs", "directory for unique run subdirectories")
+	noiseCheckFlag := flag.Bool("noise-check", false, "diagnostic-only secret-assisted coefficient noise checks; enables all plaintext checks")
+	noiseMarginFlag := flag.Float64("noise-margin-min", 20, "minimum coefficient noise margin in diagnostic mode")
+	benchmarkSampleVoters := 0
+	if benchmarkMode {
+		flag.IntVar(&benchmarkSampleVoters, "sample-voters", 1000, "voter-period aggregation samples to measure")
+	}
 	flag.Parse()
+	assert(len(flag.Args()) == 0, "unexpected positional arguments")
 
 	n := *nFlag
 	b := *bFlag
@@ -39,8 +61,33 @@ func main() {
 	echoMode := *echoModeFlag
 	refreshMode := *refreshModeFlag
 	echoRefreshInterval := *echoRefreshIntervalFlag
+	diagnosticChecks := *diagnosticChecksFlag
+	if *noiseCheckFlag {
+		diagnosticChecks = "all"
+	}
+	if benchmarkMode {
+		diagnosticChecks = "final"
+	}
+	metricsSampleInterval := *metricsSampleIntervalFlag
+	assert(!(*noiseCheckFlag && benchmarkMode), "reused benchmark fixtures cannot validate noise")
+	assert(*noiseMarginFlag >= 0, "noise margin threshold must be nonnegative")
+	assert(n > 0 && b > 0 && k > 0 && k < n && T > 0 && T%2 == 1 && N > 0, "invalid election dimensions")
+	setWorkloadSeed(*workloadSeedFlag)
+	selectedLiteral, selectedProfile := experimentLiteral(*parameterProfileFlag, *parameterFileFlag, n, qMax)
+	if *describeParametersFlag {
+		p := must1(bgv.NewParametersFromLiteral(selectedLiteral))
+		out := json.NewEncoder(os.Stdout)
+		out.SetIndent("", "  ")
+		must(out.Encode(concreteExperimentParameters(selectedProfile, p)))
+		return
+	}
 	assert(echoMode == "tree" || echoMode == "sequential", "echo-mode must be tree or sequential")
 	assert(refreshMode == "collective" || refreshMode == "none", "refresh-mode must be collective or none")
+	assert(diagnosticChecks == "all" || diagnosticChecks == "final", "diagnostic-checks must be all or final")
+	assert(!benchmarkMode || benchmarkSampleVoters > 0, "sample-voters must be > 0")
+	assert(!benchmarkMode || benchmarkSampleVoters <= n, "sample-voters must be <= n")
+	assert(metricsSampleInterval >= time.Millisecond, "metrics-sample-interval must be at least 1ms")
+	runIntermediateChecks := diagnosticChecks == "all"
 	if echoMode == "sequential" && refreshMode == "collective" {
 		assert(echoRefreshInterval > 0, "echo-refresh-interval must be > 0")
 	} else {
@@ -53,13 +100,22 @@ func main() {
 	//v := []uint64{2, 7, 1, 8, 7, 2, 8, 1, 6, 3, 2, 7, 3, 6, 1, 8, 6, 3, 5, 4}
 
 	InitMetrics(runMeta{
-		N:                   n,
-		B:                   b,
-		K:                   k,
-		T:                   T,
-		EchoMode:            echoMode,
-		RefreshMode:         refreshMode,
-		EchoRefreshInterval: echoRefreshInterval,
+		OutputRoot:           *outputRootFlag,
+		ParameterProfile:     selectedProfile,
+		WorkloadSeed:         *workloadSeedFlag,
+		EncryptionRandomness: "fresh-unseeded",
+		NoiseChecks:          *noiseCheckFlag,
+		N:                    n,
+		B:                    b,
+		K:                    k,
+		T:                    T,
+		EchoMode:             echoMode,
+		RefreshMode:          refreshMode,
+		EchoRefreshInterval:  echoRefreshInterval,
+		DiagnosticChecks:     diagnosticChecks,
+		ExecutionMode:        map[bool]string{false: "fresh", true: "sampled-server-benchmark"}[benchmarkMode],
+		BenchmarkSamples:     benchmarkSampleVoters,
+		MetricsSampleMS:      metricsSampleInterval.Milliseconds(),
 	})
 	defer func() {
 		if r := recover(); r != nil {
@@ -79,81 +135,66 @@ func main() {
 	phInit := StartPhase("1-init-random-inputs")
 	D := randomDelegationMatrix(n, k) // delegation matrix of size n x k, where D[i][j] is the delegate index for voter i and delegate j
 
-	// Retain explicit period schedules so the encrypted tally and plaintext
-	// reference can both model periods with no new submission. The initial count
-	// vectors are only simulation seeds for generating those schedules.
-	candidatePeriods := periodicChoicesFromCounts(randomVotingVector(n, b, T), n, b, T)
-	delegationPeriods := periodicChoicesFromCounts(randomDelegationVector(n, k, T), n, k, T)
-	ensureEchoCarryEvent(candidatePeriods)
-	ensureEchoCarryEvent(delegationPeriods)
-	validity := registrationValidityBits(T, n)
-	addValidityGatingScenario(candidatePeriods, validity, b)
-	addValidityGatingScenario(delegationPeriods, validity, k)
-	verifyValidityGatingScenario(candidatePeriods, validity, b)
-	verifyValidityGatingScenario(delegationPeriods, validity, k)
+	var candidatePeriods, delegationPeriods [][]int
+	var validity [][]uint64
+	if !benchmarkMode {
+		// Retain explicit period schedules so the encrypted tally and plaintext
+		// reference can both model periods with no new submission. The initial
+		// count vectors are only simulation seeds for generating those schedules.
+		candidatePeriods = periodicChoicesFromCounts(randomVotingVector(n, b, T), n, b, T)
+		delegationPeriods = periodicChoicesFromCounts(randomDelegationVector(n, k, T), n, k, T)
+		ensureEchoCarryEvent(candidatePeriods)
+		ensureEchoCarryEvent(delegationPeriods)
+		validity = registrationValidityBits(T, n)
+		addValidityGatingScenario(candidatePeriods, validity, b)
+		addValidityGatingScenario(delegationPeriods, validity, k)
+		verifyValidityGatingScenario(candidatePeriods, validity, b)
+		verifyValidityGatingScenario(delegationPeriods, validity, k)
+	}
 
-	// v and d are the effective totals after applying the periodic echo rule.
-	// They are plaintext references only and are never operands in the tally.
-	v := periodicEchoTotalsPlain(candidatePeriods, validity, n, b)
-	d := periodicEchoTotalsPlain(delegationPeriods, validity, n, k)
+	// Full plaintext echo vectors are needed only by the intermediate diagnostic
+	// checks. Final-only mode deliberately avoids keeping these n*b and n*k
+	// reference matrices live alongside the encrypted tally.
+	var v, d []uint64
+	if runIntermediateChecks {
+		v = periodicEchoTotalsPlain(candidatePeriods, validity, n, b)
+		d = periodicEchoTotalsPlain(delegationPeriods, validity, n, k)
+	}
 	q := randomVotingPower(n, qMax) // per-voter voting power q_i, one entry per voter
 	// fmt.Println("D=", D)
 	// fmt.Println("d=", d)
 	// fmt.Println("v=", v)
 	// fmt.Println("q=", q)
 	RecordSized("D_matrix", n, int64(k)*8, "n rows of k uint64 (one-hot)")
-	RecordSized("delegation_periods", T, int64(n)*8, "period-major choice indices; -1 means no submission")
-	RecordSized("candidate_periods", T, int64(n)*8, "period-major choice indices; -1 means no submission")
-	RecordSized("registration_validity", T, int64(n)*8, "one simulated private validity bit per voter-period, shared by candidate and delegation inputs")
-	RecordSized("d_vector", 1, int64(n)*int64(k)*8, "flat n*k uint64 after plaintext echo simulation")
-	RecordSized("t_vector", 1, int64(n)*int64(b)*8, "flat n*b uint64 after plaintext echo simulation")
+	if !benchmarkMode {
+		RecordSized("delegation_periods", T, int64(n)*8, "period-major choice indices; -1 means no submission")
+		RecordSized("candidate_periods", T, int64(n)*8, "period-major choice indices; -1 means no submission")
+		RecordSized("registration_validity", T, int64(n)*8, "one simulated private validity bit per voter-period, shared by candidate and delegation inputs")
+	}
+	if runIntermediateChecks {
+		RecordSized("d_vector", 1, int64(n)*int64(k)*8, "flat n*k uint64 after plaintext echo simulation")
+		RecordSized("t_vector", 1, int64(n)*int64(b)*8, "flat n*b uint64 after plaintext echo simulation")
+	}
 	RecordSized("q_vector", 1, int64(n)*8, "flat n uint64 voting power")
 	phInit.Stop()
 
 	// 2. Parameters and Keys setup
 	phSetup := StartPhase("2-bgv-setup")
-	// Every per-delegate weighted total is bounded by the total voting power in
-	// circulation, so t is picked as the smallest NTT-friendly prime strictly
-	// above sum(q). With qMax=1 this is sum(q)=n, matching the previous bound.
+	// Named profiles use the declared n*qmax bound so workload seeds cannot
+	// change the plaintext modulus. An exact parameter file may use a larger
+	// compatible modulus, but must still cover that bound.
 	qSum := sumUint64(q)
 
-	// Edit these values to experiment with BGV settings.
-	// IMPORTANT: set either (Q, P) OR (LogQ, LogP), not both.
-	const logN = 14
-	paramsLiteral := bgv.ParametersLiteral{
-		LogN: logN, // ring degree N = 2^LogN
-
-		// Option A: let Lattigo generate NTT primes from bit-sizes.
-		// This uses the full logQP=438 budget of Lattigo's 128-bit-secure
-		// LogN=14 example: logQ=377 plus logP=61. The extra seven Q bits
-		// support the final ciphertext-ciphertext product in no-refresh mode.
-		LogQ: []int{55, 46, 46, 46, 46, 46, 46, 46}, // ciphertext modulus chain
-		LogP: []int{61},                             // special primes for key-switching/relin
-
-		// Option B: provide explicit primes (uncomment and remove LogQ/LogP).
-		// Q: []uint64{...},
-		// P: []uint64{...},
-
-		// Plaintext modulus t: smallest NTT-friendly prime > sum(q).
-		PlaintextModulus: pickPlaintextModulus(qSum+1, logN),
-
-		// Secret and error distributions (optional; these are defaults).
-		Xs: ring.Ternary{P: 2.0 / 3.0},
-		Xe: ring.DiscreteGaussian{
-			Sigma: rlwe.DefaultNoise,
-			Bound: rlwe.DefaultNoiseBound,
-		},
-	}
-
-	// Record the chosen BGV parameters into the run metadata (meta.json) so each
-	// run is self-describing for correctness and security (lattice) analysis.
-	SetBGVParams(paramsLiteral)
+	paramsLiteral := selectedLiteral
 
 	// Build BGV crypto context.
 	rlweLiteral := paramsLiteral.GetRLWEParametersLiteral()
 	rlweLiteral.RingType = ring.Standard
 	rlweParams := must1(rlwe.NewParametersFromLiteral(rlweLiteral))
 	params := must1(bgv.NewParameters(rlweParams, paramsLiteral.PlaintextModulus))
+	SetBGVParams(params.ParametersLiteral())
+	rec.meta.ParameterID = experimentParameterID(concreteExperimentParameters(selectedProfile, params))
+	must(writeMeta())
 
 	/****** COMMENTED OUT FOR MULTIPARY CASE ******/
 	// kgen := bgv.NewKeyGenerator(params)
@@ -165,7 +206,12 @@ func main() {
 	fmt.Println("Slots =", params.MaxSlots())
 	fmt.Println("Dimensions =", params.MaxDimensions())
 	fmt.Println("Total voting power sum(q) =", qSum)
-	fmt.Println("Echo mode =", echoMode, "refresh mode =", refreshMode, "sequential refresh interval =", echoRefreshInterval)
+	fmt.Println("Echo mode =", echoMode, "refresh mode =", refreshMode, "sequential refresh interval =", echoRefreshInterval, "diagnostic checks =", diagnosticChecks)
+	if benchmarkMode {
+		fmt.Println("Execution mode = sampled server benchmark; aggregation samples =", benchmarkSampleVoters)
+	} else {
+		fmt.Println("Execution mode = fresh")
+	}
 	assert(qSum < params.PlaintextModulus(),
 		fmt.Sprintf("sum(q)=%d must be < plaintext modulus t=%d", qSum, params.PlaintextModulus()))
 
@@ -244,6 +290,10 @@ func main() {
 	evk := rlwe.NewMemEvaluationKeySet(rlk, gks...)
 	evaluator := bgv.NewEvaluator(params, evk, true)
 	polyEval := bgvpoly.NewEvaluator(params, evaluator)
+	if *noiseCheckFlag {
+		startNoiseDiagnostics(params, encoder, evaluator, P, *noiseMarginFlag)
+		defer finishNoiseDiagnostics()
+	}
 	phSetup.Stop()
 	RecordRelinKey("rlk", rlk)
 	RecordGaloisKeys("galois_keys", gks)
@@ -301,7 +351,19 @@ func main() {
 	phInputs.Stop()
 	RecordCiphertexts("qExtCiphertexts", qExtCiphertexts)
 	RecordCiphertexts("qBaseCiphertexts", qBaseCiphertexts)
-	mp_verifyBaseSlotCiphertexts("encrypted q base projection", encoder, params, layout, blockSize, q, qBaseCiphertexts, &cks, P)
+	if runIntermediateChecks {
+		mp_verifyBaseSlotCiphertexts("encrypted q base projection", encoder, params, layout, blockSize, q, qBaseCiphertexts, &cks, P)
+	}
+
+	// The server benchmark prepares scale-compatible encrypted-zero operands
+	// outside the measured aggregation sample.
+	var benchmarkInputs *benchmarkInputCiphertexts
+	if benchmarkMode {
+		phFixtures := StartPhase("3.1-benchmark-input-fixture-preparation")
+		benchmarkInputs = prepareBenchmarkInputCiphertexts(params, encoder, encryptor)
+		phFixtures.Stop()
+		RecordCiphertexts("benchmarkInputFixtures", []*rlwe.Ciphertext{benchmarkInputs.validity, benchmarkInputs.input})
+	}
 
 	// 4. Tally. The simulator creates each incoming validity ciphertext only
 	// when its voter-period submission is processed. The same ciphertext gates
@@ -309,7 +371,7 @@ func main() {
 	phEncrypt := StartPhase("4.1-streamed-input-reception-and-validity-gating")
 	periodAggregates := streamAndAggregatePeriodInputs(
 		params, encoder, encryptor, evaluator, layout, blockSize, b, k,
-		candidatePeriods, delegationPeriods, validity,
+		n, T, candidatePeriods, delegationPeriods, validity, benchmarkSampleVoters, benchmarkInputs,
 	)
 	phEncrypt.Stop()
 	RecordComponentTiming(
@@ -322,7 +384,7 @@ func main() {
 		"4.1-simulated-client-input-preparation",
 		periodAggregates.clientPreparationWall,
 		periodAggregates.clientPreparationCPU,
-		"encoding and encryption of incoming validity, payload, and range-mask ciphertexts; excluded from server ingestion time",
+		fmt.Sprintf("execution-mode=%s; encoding and encryption of incoming validity, payload, and range-mask ciphertexts; excluded from server ingestion time", map[bool]string{false: "fresh", true: "sampled-server-benchmark"}[benchmarkMode]),
 	)
 	RecordComponentTiming(
 		"4.1-server-validity-gating-and-aggregation",
@@ -336,16 +398,35 @@ func main() {
 		periodAggregates.clientPreparationWall,
 		periodAggregates.serverIngestionWall,
 	)
+	if benchmarkMode {
+		estimatedAggregation := time.Duration(float64(periodAggregates.serverIngestionWall) * float64(n*T) / float64(benchmarkSampleVoters))
+		RecordComponentTiming(
+			"4.1-estimated-full-server-validity-gating-and-aggregation",
+			estimatedAggregation,
+			time.Duration(float64(periodAggregates.serverIngestionCPU)*float64(n*T)/float64(benchmarkSampleVoters)),
+			fmt.Sprintf("extrapolated from %d combined voter-period samples to n*T=%d; estimate, not directly measured", benchmarkSampleVoters, n*T),
+		)
+		fmt.Printf("Estimated full server gating/aggregation for n*T=%d: %s\n", n*T, estimatedAggregation)
+	}
 	candidatePeriodInputs := periodAggregates.candidateInputs
 	candidateRangeMaskCiphertexts := periodAggregates.candidateRangeMasks
 	delegationPeriodInputs := periodAggregates.delegationInputs
 	delegationRangeMaskCiphertexts := periodAggregates.delegationRangeMasks
-	RecordSized(
-		"validity_ciphertexts_received",
-		periodAggregates.validityCiphertextCount,
-		periodAggregates.validityCiphertextBytes,
-		"serialized input traffic estimate; ciphertexts are consumed one at a time and are not retained",
-	)
+	if benchmarkMode {
+		RecordSized(
+			"sampled_validity_ciphertexts",
+			periodAggregates.validityCiphertextCount,
+			periodAggregates.validityCiphertextBytes,
+			"benchmark sample count only; not a communication estimate",
+		)
+	} else {
+		RecordSized(
+			"validity_ciphertexts_received",
+			periodAggregates.validityCiphertextCount,
+			periodAggregates.validityCiphertextBytes,
+			"serialized input traffic estimate; ciphertexts are consumed one at a time and are not retained",
+		)
+	}
 
 	flattenPeriodGrid := func(grid [][]*rlwe.Ciphertext) []*rlwe.Ciphertext {
 		flat := make([]*rlwe.Ciphertext, 0, T*layout.ciphertextCount)
@@ -358,13 +439,15 @@ func main() {
 	RecordCiphertexts("candidateRangeMaskCiphertexts", flattenPeriodGrid(candidateRangeMaskCiphertexts))
 	RecordCiphertexts("delegationPeriodInputs", flattenPeriodGrid(delegationPeriodInputs))
 	RecordCiphertexts("delegationRangeMaskCiphertexts", flattenPeriodGrid(delegationRangeMaskCiphertexts))
-	for period := range T {
-		candidatePayloadPlain, candidateMaskPlain := gatedPeriodPlain(candidatePeriods[period], validity[period], n, b)
-		delegationPayloadPlain, delegationMaskPlain := gatedPeriodPlain(delegationPeriods[period], validity[period], n, k)
-		mp_verifyPackedCiphertexts(fmt.Sprintf("candidate gated payload period %d", period), encoder, params, layout, blockSize, b, candidatePayloadPlain, candidatePeriodInputs[period], &cks, P)
-		mp_verifyPackedCiphertexts(fmt.Sprintf("candidate gated range mask period %d", period), encoder, params, layout, blockSize, b, candidateMaskPlain, candidateRangeMaskCiphertexts[period], &cks, P)
-		mp_verifyPackedCiphertexts(fmt.Sprintf("delegation gated payload period %d", period), encoder, params, layout, blockSize, k, delegationPayloadPlain, delegationPeriodInputs[period], &cks, P)
-		mp_verifyPackedCiphertexts(fmt.Sprintf("delegation gated range mask period %d", period), encoder, params, layout, blockSize, k, delegationMaskPlain, delegationRangeMaskCiphertexts[period], &cks, P)
+	if runIntermediateChecks {
+		for period := range T {
+			candidatePayloadPlain, candidateMaskPlain := gatedPeriodPlain(candidatePeriods[period], validity[period], n, b)
+			delegationPayloadPlain, delegationMaskPlain := gatedPeriodPlain(delegationPeriods[period], validity[period], n, k)
+			mp_verifyPackedCiphertexts(fmt.Sprintf("candidate gated payload period %d", period), encoder, params, layout, blockSize, b, candidatePayloadPlain, candidatePeriodInputs[period], &cks, P)
+			mp_verifyPackedCiphertexts(fmt.Sprintf("candidate gated range mask period %d", period), encoder, params, layout, blockSize, b, candidateMaskPlain, candidateRangeMaskCiphertexts[period], &cks, P)
+			mp_verifyPackedCiphertexts(fmt.Sprintf("delegation gated payload period %d", period), encoder, params, layout, blockSize, k, delegationPayloadPlain, delegationPeriodInputs[period], &cks, P)
+			mp_verifyPackedCiphertexts(fmt.Sprintf("delegation gated range mask period %d", period), encoder, params, layout, blockSize, k, delegationMaskPlain, delegationRangeMaskCiphertexts[period], &cks, P)
+		}
 	}
 
 	// 4.2 - Apply the encrypted periodic echo recurrence independently to the
@@ -518,8 +601,10 @@ func main() {
 	phEcho.Stop()
 	RecordCiphertexts("vCiphertexts", vCiphertexts)
 	RecordCiphertexts("dCiphertexts", dCiphertexts)
-	mp_verifyPackedCiphertexts("candidate periodic echo total", encoder, params, layout, blockSize, b, v, vCiphertexts, &cks, P)
-	mp_verifyPackedCiphertexts("delegation periodic echo total", encoder, params, layout, blockSize, k, d, dCiphertexts, &cks, P)
+	if runIntermediateChecks {
+		mp_verifyPackedCiphertexts("candidate periodic echo total", encoder, params, layout, blockSize, b, v, vCiphertexts, &cks, P)
+		mp_verifyPackedCiphertexts("delegation periodic echo total", encoder, params, layout, blockSize, k, d, dCiphertexts, &cks, P)
+	}
 
 	// 4.3 - Lagrange interpolation I(x > T/2)
 	// decryptor := bgv.NewDecryptor(params, tsk) // COMMENTED OUT FOR MULTIPARTY CASE
@@ -540,11 +625,15 @@ func main() {
 		indicatorProg.Inc()
 	}
 	indicatorProg.Finish()
+	recordNoiseCheckpoint("candidate_indicator", vCiphertexts)
+	recordNoiseCheckpoint("delegation_indicator", dCiphertexts)
 	phIndicator.Stop()
 	//verifyIndicatorCiphertexts("t after indicator", decryptor, encoder, params, layout, blockSize, b, v, vCiphertexts, T)
 	//verifyIndicatorCiphertexts("d after indicator", decryptor, encoder, params, layout, blockSize, k, d, dCiphertexts, T)
-	mp_verifyIndicatorCiphertexts("t after indicator", encoder, params, layout, blockSize, b, v, vCiphertexts, T, &cks, P)
-	mp_verifyIndicatorCiphertexts("d after indicator", encoder, params, layout, blockSize, k, d, dCiphertexts, T, &cks, P)
+	if runIntermediateChecks {
+		mp_verifyIndicatorCiphertexts("t after indicator", encoder, params, layout, blockSize, b, v, vCiphertexts, T, &cks, P)
+		mp_verifyIndicatorCiphertexts("d after indicator", encoder, params, layout, blockSize, k, d, dCiphertexts, T, &cks, P)
+	}
 
 	// 4.4 - Aggregate row of d using the prepared encrypted q_ext input
 	phSupport := StartPhase("4.4-tally-delegate-support")
@@ -562,18 +651,20 @@ func main() {
 		dCiphertexts[0].Level(),
 		dWeighted[0].Level(),
 	)
-	mp_verifyPackedCiphertexts(
-		"encrypted d' * q_ext",
-		encoder,
-		params,
-		layout,
-		blockSize,
-		k,
-		weightedDelegationIndicatorPlain(d, q, n, k, T),
-		dWeighted,
-		&cks,
-		P,
-	)
+	if runIntermediateChecks {
+		mp_verifyPackedCiphertexts(
+			"encrypted d' * q_ext",
+			encoder,
+			params,
+			layout,
+			blockSize,
+			k,
+			weightedDelegationIndicatorPlain(d, q, n, k, T),
+			dWeighted,
+			&cks,
+			P,
+		)
+	}
 
 	ctDelegateSupport := bgv.NewCiphertext(params, 1, dWeighted[0].Level())
 	CountOp("RotateAndAdd")
@@ -609,8 +700,9 @@ func main() {
 	phSupport.Stop()
 	RecordCiphertexts("dWeighted", dWeighted)
 	RecordCiphertexts("ctDelegateSupport", []*rlwe.Ciphertext{ctDelegateSupport})
-	//verifyLeadingSlotsCiphertext("delegate support", decryptor, encoder, params, delegateSupportPlain(d, q, n, k, T), ctDelegateSupport)
-	mp_verifyLeadingSlotsCiphertext("delegate support", encoder, params, delegateSupportPlain(d, q, n, k, T), ctDelegateSupport, &cks, P)
+	if runIntermediateChecks {
+		mp_verifyLeadingSlotsCiphertext("delegate support", encoder, params, delegateSupportPlain(d, q, n, k, T), ctDelegateSupport, &cks, P)
+	}
 
 	// 4.5 - Computing the weighted self-power vector dTilde * q
 	phDTilde := StartPhase("4.5-tally-dTilde")
@@ -653,14 +745,15 @@ func main() {
 	}
 	phDTilde.Stop()
 	RecordCiphertexts("dTildeCiphertexts", dTildeCiphertexts)
-	//verifyBaseSlotCiphertexts("dTilde", decryptor, encoder, params, layout, blockSize, weightedSelfPowerPlain(d, q, n, k, T), dTildeCiphertexts)
-	mp_verifyBaseSlotCiphertexts("dTilde", encoder, params, layout, blockSize, weightedSelfPowerPlain(d, q, n, k, T), dTildeCiphertexts, &cks, P)
+	if runIntermediateChecks {
+		mp_verifyBaseSlotCiphertexts("dTilde", encoder, params, layout, blockSize, weightedSelfPowerPlain(d, q, n, k, T), dTildeCiphertexts, &cks, P)
+	}
 
 	// 4.6 - Compute the voter weights votWeights = Dw + dTilde
 	// Precompute one-hot target mask plaintexts indexed by local voter position within a ciphertext.
 	phDw := StartPhase("4.6-tally-Dw+dTilde")
 	targetMaskPts := make([]*rlwe.Plaintext, layout.votersPerCiphertext)
-	for localVoterIdx := range layout.votersPerCiphertext {
+	for localVoterIdx := range min(n, layout.votersPerCiphertext) {
 		blockStart := (localVoterIdx / layout.votersPerRow) * layout.colsPerCiphertext
 		blockStart += (localVoterIdx % layout.votersPerRow) * blockSize
 		targetMask := make([]uint64, params.MaxSlots())
@@ -701,18 +794,18 @@ func main() {
 	phDw.Stop()
 	RecordCiphertexts("dwCiphertexts", dwCiphertexts)
 	RecordCiphertexts("voterWeightCiphertexts", voterWeightCiphertexts)
-	// Verification of Dw + dTilde
-	expectedDw := make([]uint64, n)
-	delegateSupport := delegateSupportPlain(d, q, n, k, T)
-	for i := 0; i < n; i++ {
-		for l := 0; l < k; l++ {
-			expectedDw[i] += D[i][l] * delegateSupport[l]
+	if runIntermediateChecks {
+		// Verification of Dw + dTilde.
+		expectedDw := make([]uint64, n)
+		delegateSupport := delegateSupportPlain(d, q, n, k, T)
+		for i := 0; i < n; i++ {
+			for l := 0; l < k; l++ {
+				expectedDw[i] += D[i][l] * delegateSupport[l]
+			}
 		}
+		mp_verifyBaseSlotCiphertexts("encrypted D w_d", encoder, params, layout, blockSize, expectedDw, dwCiphertexts, &cks, P)
+		mp_verifyBaseSlotCiphertexts("Dw_d + dTilde", encoder, params, layout, blockSize, delegatedVoterWeightsPlain(D, d, q, n, k, T), voterWeightCiphertexts, &cks, P)
 	}
-	//verifyBaseSlotCiphertexts("encrypted D w_d", decryptor, encoder, params, layout, blockSize, expectedDw, dwCiphertexts)
-	//verifyBaseSlotCiphertexts("Dw_d + dTilde", decryptor, encoder, params, layout, blockSize, delegatedVoterWeightsPlain(D, d, q, n, k, T), voterWeightCiphertexts)
-	mp_verifyBaseSlotCiphertexts("encrypted D w_d", encoder, params, layout, blockSize, expectedDw, dwCiphertexts, &cks, P)
-	mp_verifyBaseSlotCiphertexts("Dw_d + dTilde", encoder, params, layout, blockSize, delegatedVoterWeightsPlain(D, d, q, n, k, T), voterWeightCiphertexts, &cks, P)
 
 	// 4.7 - Product of t and w, followed by packed aggregation
 	phTally := StartPhase("4.7-tally-vote-weight-product")
@@ -762,6 +855,18 @@ func main() {
 	// decoded := append([]uint64(nil), slots[:b]...)
 	phDecrypt.Stop()
 	fmt.Println("decrypted final tally =", decoded[:b])
-	//verifyLeadingSlotsCiphertext("final tally", decryptor, encoder, params, delegatedMaskedTallyPlain(D, d, v, q, n, b, k, T), ctResult)
-	mp_verifyLeadingSlotsCiphertext("final tally", encoder, params, delegatedMaskedTallyPlain(D, d, v, q, n, b, k, T), ctResult, &cks, P)
+	var expectedFinal []uint64
+	if runIntermediateChecks {
+		expectedFinal = delegatedMaskedTallyPlain(D, d, v, q, n, b, k, T)
+	} else {
+		if benchmarkMode {
+			// Benchmark payload and range-mask fixtures encrypt zero.
+			expectedFinal = make([]uint64, b)
+		} else {
+			expectedFinal = delegatedMaskedTallyFromPeriodsPlain(
+				D, candidatePeriods, delegationPeriods, validity, q, n, b, k, T,
+			)
+		}
+	}
+	verifyLeadingSlots("final tally", expectedFinal, decoded[:b])
 }

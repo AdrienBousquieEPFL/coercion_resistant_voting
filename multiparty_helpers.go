@@ -98,6 +98,7 @@ func collectiveRefresh(
 ) *rlwe.Ciphertext {
 	assert(len(parties) > 0, "collective refresh requires at least one party")
 
+	recordNoiseCheckpoint("pre_refresh", []*rlwe.Ciphertext{ct})
 	refresh := must1(mpbgv.NewRefreshProtocol(params, params.Xe()))
 	inputLevel := ct.Level()
 	outputLevel := params.MaxLevel()

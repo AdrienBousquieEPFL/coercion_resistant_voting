@@ -1,9 +1,9 @@
 package main
 
 import (
-	cryptorand "crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"io"
 
 	"github.com/tuneinsight/lattigo/v6/ring"
 )
@@ -48,7 +48,7 @@ func randUint64n(n uint64) uint64 {
 	var buf [8]byte
 
 	for {
-		must1(cryptorand.Read(buf[:]))
+		must1(io.ReadFull(workloadRandom, buf[:]))
 		x := binary.LittleEndian.Uint64(buf[:])
 		if x < limit {
 			return x % n

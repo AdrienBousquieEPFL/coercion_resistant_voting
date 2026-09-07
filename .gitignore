@@ -1,3 +1,14 @@
-runs/
+# Local experiment outputs and binaries
+/runs/
+/bin/
+/experiments/results/
+/experiments/validation/
+/analysis/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Editor and OS files
 .idea/
-EXPERIMENTS.md
+.DS_Store

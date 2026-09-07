@@ -27,20 +27,30 @@ import (
 // runMeta is serialized to meta.json. It captures every parameter needed to
 // reproduce a run and to interpret the other CSVs against fixed inputs.
 type runMeta struct {
-	RunID               string         `json:"run_id"`
-	StartedAt           string         `json:"started_at"`
-	N                   int            `json:"n"`
-	B                   int            `json:"b"`
-	K                   int            `json:"k"`
-	T                   int            `json:"T"`
-	EchoMode            string         `json:"echo_mode"`
-	RefreshMode         string         `json:"refresh_mode"`
-	EchoRefreshInterval int            `json:"echo_refresh_interval"`
-	BGV                 *bgvParamsMeta `json:"bgv,omitempty"`
-	GitSHA              string         `json:"git_sha"`
-	Hostname            string         `json:"hostname"`
-	GoVersion           string         `json:"go_version"`
-	NumCPU              int            `json:"num_cpu"`
+	OutputRoot           string         `json:"-"`
+	ParameterProfile     string         `json:"parameter_profile"`
+	ParameterID          string         `json:"parameter_id"`
+	WorkloadSeed         string         `json:"workload_seed"`
+	EncryptionRandomness string         `json:"encryption_randomness"`
+	NoiseChecks          bool           `json:"noise_checks"`
+	RunID                string         `json:"run_id"`
+	StartedAt            string         `json:"started_at"`
+	N                    int            `json:"n"`
+	B                    int            `json:"b"`
+	K                    int            `json:"k"`
+	T                    int            `json:"T"`
+	EchoMode             string         `json:"echo_mode"`
+	RefreshMode          string         `json:"refresh_mode"`
+	EchoRefreshInterval  int            `json:"echo_refresh_interval"`
+	DiagnosticChecks     string         `json:"diagnostic_checks"`
+	ExecutionMode        string         `json:"execution_mode"`
+	BenchmarkSamples     int            `json:"benchmark_sample_voters,omitempty"`
+	MetricsSampleMS      int64          `json:"metrics_sample_interval_ms"`
+	BGV                  *bgvParamsMeta `json:"bgv,omitempty"`
+	GitSHA               string         `json:"git_sha"`
+	Hostname             string         `json:"hostname"`
+	GoVersion            string         `json:"go_version"`
+	NumCPU               int            `json:"num_cpu"`
 }
 
 // bgvParamsMeta captures the BGV/RLWE parameters chosen for a run. These are
@@ -84,6 +94,19 @@ type componentTimingRecord struct {
 	WallMs float64
 	CPUMs  float64
 	Notes  string
+}
+
+// runSummary contains the headline process-wide resource measurements. The
+// operating-system high-water RSS is the primary memory-footprint value;
+// sampled peaks remain useful only for attributing memory to an approximate
+// phase.
+type runSummary struct {
+	RunID              string  `json:"run_id"`
+	ElapsedMs          int64   `json:"elapsed_ms"`
+	ProcessPeakRSSMiB  float64 `json:"process_peak_rss_mib"`
+	SampledPeakRSSMiB  float64 `json:"sampled_peak_rss_mib"`
+	SampledHeapPeakMiB float64 `json:"sampled_heap_peak_mib"`
+	SampleIntervalMs   int64   `json:"sample_interval_ms"`
 }
 
 type objectRecord struct {
@@ -153,6 +176,13 @@ func InitMetrics(meta runMeta) {
 	now := time.Now()
 	runID := fmt.Sprintf("%s_n%d_b%d_k%d_T%d",
 		now.Format("20060102_150405"), meta.N, meta.B, meta.K, meta.T)
+	outputRoot := meta.OutputRoot
+	if outputRoot == "" {
+		outputRoot = "runs"
+	}
+	must(os.MkdirAll(outputRoot, 0755))
+	runDir := must1(os.MkdirTemp(outputRoot, runID+"_"))
+	runID = filepath.Base(runDir)
 	meta.RunID = runID
 	meta.StartedAt = now.Format(time.RFC3339)
 	meta.GitSHA = gitSHA()
@@ -161,7 +191,7 @@ func InitMetrics(meta runMeta) {
 	meta.NumCPU = runtime.NumCPU()
 
 	rec = &metricsRecorder{
-		runDir:    filepath.Join("runs", runID),
+		runDir:    runDir,
 		startTime: now,
 		meta:      meta,
 		opCounts:  make(map[string]map[string]int64),
@@ -179,13 +209,13 @@ func InitMetrics(meta runMeta) {
 		_ = writeMeta()
 	}
 
-	go rec.sampleLoop(250 * time.Millisecond)
+	go rec.sampleLoop(time.Duration(meta.MetricsSampleMS) * time.Millisecond)
 }
 
-// SetBGVParams backfills the chosen BGV parameters into meta. It is called
-// once the ParametersLiteral has been constructed (InitMetrics runs before it
-// exists). Values are read straight off the literal — i.e. exactly what the
-// user chose — and the total modulus sizes are derived for convenience.
+// SetBGVParams records a parameter literal. The main executable supplies the
+// resolved literal so generated primes, rather than only requested bit sizes,
+// are included in meta.json. Integer bit-size fields are convenient upper
+// bounds when explicit primes are supplied; security estimates use exact Q*P.
 func SetBGVParams(p bgv.ParametersLiteral) {
 	if rec == nil {
 		return
@@ -323,6 +353,7 @@ func flushCheckpoint() {
 	}
 	for name, fn := range map[string]func() error{
 		"meta.json":      writeMeta,
+		"summary.json":   writeSummary,
 		"phases.csv":     writePhases,
 		"components.csv": writeComponents,
 		"objects.csv":    writeObjects,
@@ -336,9 +367,9 @@ func flushCheckpoint() {
 	}
 }
 
-// currentRSSMiB shells out to ps. ~5 ms cost per call; at 250 ms cadence the
-// overhead is ~2% of one core. RSS is the canonical "RAM the OS sees the
-// process using", which is the number that matters for OOM analysis.
+// currentRSSMiB shells out to ps. At the default one-second cadence this is
+// used only for approximate phase attribution. The process-wide high-water RSS
+// in summary.json is the canonical memory-footprint result.
 func currentRSSMiB() float64 {
 	out, err := exec.Command("ps", "-o", "rss=", "-p", strconv.Itoa(os.Getpid())).Output()
 	if err != nil {
@@ -349,6 +380,22 @@ func currentRSSMiB() float64 {
 		return 0
 	}
 	return float64(rssKB) / 1024.0
+}
+
+// processMaxRSSMiB returns the operating system's resident-set high-water mark
+// for this process. Darwin reports ru_maxrss in bytes, while Linux and the BSDs
+// report KiB. This value is not sampling-based and therefore does not miss a
+// short-lived allocation spike.
+func processMaxRSSMiB() float64 {
+	var ru syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &ru); err != nil {
+		return 0
+	}
+	raw := float64(ru.Maxrss)
+	if runtime.GOOS == "darwin" {
+		return raw / 1024 / 1024
+	}
+	return raw / 1024
 }
 
 // StartPhase forces a GC so heap deltas reflect live data only, then records
@@ -430,6 +477,7 @@ func cpuTime() time.Duration {
 // RecordCiphertexts sums BinarySize() across every ciphertext. Levels can
 // differ after operations, so we don't extrapolate from cts[0].
 func RecordCiphertexts(name string, cts []*rlwe.Ciphertext) {
+	recordNoiseCheckpoint(name, cts)
 	if rec == nil || len(cts) == 0 {
 		return
 	}
@@ -617,6 +665,9 @@ func FinalizeMetrics() error {
 	if err := writeMeta(); err != nil {
 		return err
 	}
+	if err := writeSummary(); err != nil {
+		return err
+	}
 	if err := writePhases(); err != nil {
 		return err
 	}
@@ -635,8 +686,8 @@ func FinalizeMetrics() error {
 	if err := writeOps(); err != nil {
 		return err
 	}
-	fmt.Printf("[metrics] wrote phases=%d components=%d objects=%d samples=%d ops=%d to %s\n",
-		len(rec.phases), len(rec.components), len(rec.objects), len(rec.samples), opTotal(), rec.runDir)
+	fmt.Printf("[metrics] peak_rss=%.3f MiB; wrote phases=%d components=%d objects=%d samples=%d ops=%d to %s\n",
+		processMaxRSSMiB(), len(rec.phases), len(rec.components), len(rec.objects), len(rec.samples), opTotal(), rec.runDir)
 	return nil
 }
 
@@ -657,6 +708,34 @@ func writeMeta() error {
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
 	return enc.Encode(rec.meta)
+}
+
+func writeSummary() error {
+	var sampledRSSPeak, sampledHeapPeak float64
+	for _, s := range rec.samples {
+		if s.RSSMiB > sampledRSSPeak {
+			sampledRSSPeak = s.RSSMiB
+		}
+		if s.HeapAllocMiB > sampledHeapPeak {
+			sampledHeapPeak = s.HeapAllocMiB
+		}
+	}
+	summary := runSummary{
+		RunID:              rec.meta.RunID,
+		ElapsedMs:          time.Since(rec.startTime).Milliseconds(),
+		ProcessPeakRSSMiB:  processMaxRSSMiB(),
+		SampledPeakRSSMiB:  sampledRSSPeak,
+		SampledHeapPeakMiB: sampledHeapPeak,
+		SampleIntervalMs:   rec.meta.MetricsSampleMS,
+	}
+	f, err := os.Create(filepath.Join(rec.runDir, "summary.json"))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	return enc.Encode(summary)
 }
 
 func writePhases() error {

@@ -67,6 +67,8 @@ You can change these parameters:
 | `--echo-mode` | `tree` | Echo method: `tree` or `sequential` |
 | `--refresh-mode` | `collective` | Refresh strategy: `collective` or `none` |
 | `--echo-refresh-interval` | `1` | Number of sequential updates between refreshes |
+| `--diagnostic-checks` | `all` | Threshold-decryption checks: `all` or `final` |
+| `--metrics-sample-interval` | `1s` | Interval for phase-level CPU and memory samples |
 
 ### Echo strategies
 
@@ -120,6 +122,47 @@ This mode also disables intermediate sequential refreshes and ignores
 every larger value of `n`, `T`, or `qmax` has enough noise budget. Collective
 mode remains the default.
 
+### Diagnostic checks
+
+The default `--diagnostic-checks=all` threshold-decrypts and checks intermediate
+ciphertexts to identify errors during development. These decryptions are not
+part of the intended tally protocol. For runtime and memory experiments, use:
+
+```bash
+go run . --diagnostic-checks=final
+```
+
+Final mode skips every intermediate threshold decryption and does not allocate
+the full `n*b` and `n*k` plaintext echo-reference vectors. It performs one
+threshold decryption of the completed tally and compares that decoded result
+with a memory-light reference computed directly from the period schedules. The
+selected mode is recorded in `meta.json`.
+
+### Sampled server benchmark
+
+Normal `go run .` execution independently encodes and encrypts incoming client
+inputs. Use normal execution for correctness, communication, and noise-budget
+experiments.
+
+The separate `benchmark` command estimates large-election server cost without
+executing the repeated aggregation for every voter and period:
+
+```bash
+go run . benchmark --n=500000 --sample-voters=1000 --progress=false
+```
+
+It measures one period of combined candidate/delegation submissions for the
+requested sample size, then extrapolates validity-gating and aggregation time
+to `n*T`. It allocates distinct encrypted-zero period aggregates for the full
+target layout and directly runs the complete echo and downstream tally over
+all `T` periods. Fixture preparation is outside the aggregation sample.
+
+The benchmark command automatically uses final-only diagnostics. Its zero
+fixtures and extrapolated aggregation are suitable for server runtime and
+target-layout memory experiments, but not for correctness, communication, or
+noise-budget conclusions. Use several sample sizes and repetitions to confirm
+that aggregation time scales linearly.
+
 ## Results and instrumentation
 
 Every run creates a new timestamped directory under `runs/`. It contains:
@@ -131,6 +174,11 @@ Every run creates a new timestamped directory under `runs/`. It contains:
 - CPU and memory measurements; and
 - crash information if the run fails.
 
+`summary.json` contains the process-wide peak RSS reported by the operating
+system. Use `process_peak_rss_mib` as the headline memory-footprint result: it
+is a high-water mark rather than a periodic sample, so it also captures short
+memory spikes. Run each measured configuration in a fresh process.
+
 `components.csv` separates the streamed-input phase into lightweight timing
 totals for encrypted-zero aggregate initialization, simulated client
 encoding/encryption, and server-side validity gating/aggregation. These
@@ -139,6 +187,11 @@ the per-voter loop. They are non-overlapping parts of Phase 4.1 and must not be
 added to the full phase time again. Their sum can be slightly smaller than the
 outer phase because ordinary loop, packing, progress, and instrumentation
 overhead is not assigned to a component.
+
+The default one-second background sampling interval is intended only to show
+approximately which phase caused the memory peak. A shorter interval such as
+`--metrics-sample-interval=250ms` can be used for dedicated detailed profiling,
+but compared runs should use the same interval.
 
 `meta.json` records the echo mode, refresh mode, and refresh interval. The
 streamed-input phase separately counts simulated validity encryption,
@@ -164,3 +217,19 @@ go test ./...
 The deterministic unit tests cover shared validity behavior, invalid-input
 echo, balanced-versus-sequential echo results, and the first packing boundary
 that requires more than one ciphertext.
+
+
+## Runtime experiment campaign
+
+The 75-configuration campaign, exact-prime parameter files, per-`n` launchers,
+and parameter-screening workflow are documented in
+[`EXPERIMENTS.md`](EXPERIMENTS.md). Benchmark ingestion starts at
+`n=10000` and covers all voters for one period, with `T=5` downstream.
+
+Use `--parameter-file=<file>` for a concrete versioned profile,
+`--workload-seed=<seed>` to repeat simulated inputs, and `--output-root=<dir>`
+for uniquely named result directories. Keys and encryption remain freshly
+random. `--noise-check` is an opt-in, secret-assisted diagnostic for synthetic
+experiments; it enables all plaintext checks and must not be used for timing
+or with reused benchmark fixtures. `--describe-parameters` prints a concrete
+profile without generating keys or running the tally.

@@ -99,6 +99,52 @@ func TestBalancedAndSequentialEchoAgree(t *testing.T) {
 	}
 }
 
+func TestStreamingFinalReferenceMatchesMaterializedReference(t *testing.T) {
+	const (
+		n = 3
+		b = 3
+		k = 2
+		T = 5
+	)
+	D := [][]uint64{
+		{1, 0},
+		{0, 1},
+		{1, 0},
+	}
+	candidatePeriods := [][]int{
+		{0, 1, 2},
+		{1, -1, 2},
+		{-1, 2, 1},
+		{2, 2, -1},
+		{2, 0, 1},
+	}
+	delegationPeriods := [][]int{
+		{-1, 0, 1},
+		{0, 0, -1},
+		{-1, 1, 1},
+		{1, -1, 0},
+		{-1, 1, 0},
+	}
+	validity := [][]uint64{
+		{1, 1, 1},
+		{0, 1, 1},
+		{1, 0, 1},
+		{1, 1, 0},
+		{1, 1, 1},
+	}
+	q := []uint64{1, 3, 2}
+
+	v := periodicEchoTotalsPlain(candidatePeriods, validity, n, b)
+	d := periodicEchoTotalsPlain(delegationPeriods, validity, n, k)
+	want := delegatedMaskedTallyPlain(D, d, v, q, n, b, k, T)
+	got := delegatedMaskedTallyFromPeriodsPlain(
+		D, candidatePeriods, delegationPeriods, validity, q, n, b, k, T,
+	)
+	if !slices.Equal(got, want) {
+		t.Fatalf("streaming final reference: got %v, want %v", got, want)
+	}
+}
+
 func TestPackingLayoutCrossesCiphertextBoundary(t *testing.T) {
 	const blockWidth = 5
 	const rows = 2

@@ -1,0 +1,81 @@
+package main
+
+import (
+ "flag"
+ "fmt"
+ "github.com/tuneinsight/lattigo/v6/core/rlwe"
+ "github.com/tuneinsight/lattigo/v6/schemes/bgv"
+)
+
+var screenTarget = flag.Int("screen-target-n",500000,"full target voter count for synthetic noise amplification")
+var screenPattern = flag.String("screen-workload","concentrated","random, balanced or concentrated synthetic workload")
+
+func screenWorkload(c,d [][]int,b,k int) {
+ if *screenPattern=="random" { return }
+ assert(*screenPattern=="concentrated" || *screenPattern=="balanced","invalid screen workload")
+ for p:=range c { for v:=range c[p] {
+  if *screenPattern=="concentrated" { c[p][v],d[p][v]=0,0 } else { c[p][v],d[p][v]=v%b,v%k }
+ } }
+}
+
+func screenCiphertextCount(layout packingLayout) int {
+ return (*screenTarget+layout.votersPerCiphertext-1)/layout.votersPerCiphertext
+}
+
+// Amplify the actual residual error by exactly factor without changing scale
+// or message. This secret-assisted operation exists only in the copied screen.
+func screenAmplifyResidual(ct *rlwe.Ciphertext,factor int) {
+ assert(noiseChecks!=nil,"synthetic screen requires --noise-check")
+ assert(factor>0,"screen amplification factor must be positive")
+ d:=noiseChecks
+ decoded:=d.decryptor.DecryptNew(ct)
+ values:=make([]uint64,d.params.MaxSlots())
+ must(d.encoder.Decode(decoded,values))
+ expected:=bgv.NewPlaintext(d.params,ct.Level());expected.MetaData=ct.MetaData.CopyNew()
+ must(d.encoder.Encode(values,expected))
+ ringQ:=d.params.RingQ().AtLevel(ct.Level())
+ ringQ.Sub(decoded.Value,expected.Value,decoded.Value)
+ ringQ.MulScalar(decoded.Value,uint64(factor-1),decoded.Value)
+ ringQ.Add(ct.Value[0],decoded.Value,ct.Value[0])
+}
+
+func screenAndAggregatePeriodInputs(params bgv.Parameters,encoder *bgv.Encoder,encryptor *rlwe.Encryptor,evaluator *bgv.Evaluator,layout packingLayout,blockSize,candidateWidth,delegationWidth,voterCount,periodCount int,candidatePeriods,delegationPeriods [][]int,validity [][]uint64,benchmarkSampleVoters int,benchmarkInputs *benchmarkInputCiphertexts) encryptedPeriodAggregates {
+ assert(benchmarkSampleVoters==0,"noise screening cannot use reused benchmark fixtures")
+ assert(*screenTarget>=voterCount,"screen target cannot be smaller than probe")
+ rec.meta.ExecutionMode="synthetic-noise-screen"
+ fmt.Printf("[screen] target_n=%d probe_n=%d target_ciphertexts=%d workload=%s; synthetic residual amplification\n",*screenTarget,voterCount,screenCiphertextCount(layout),*screenPattern)
+ out:=encryptedPeriodAggregates{}
+ newGrid:=func()[][]*rlwe.Ciphertext {
+  grid:=make([][]*rlwe.Ciphertext,periodCount)
+  for p:=range grid { grid[p]=make([]*rlwe.Ciphertext,layout.ciphertextCount) };return grid
+ }
+ out.candidateInputs,out.candidateRangeMasks=newGrid(),newGrid()
+ out.delegationInputs,out.delegationRangeMasks=newGrid(),newGrid()
+ ones:=make([]uint64,params.MaxSlots());for i:=range ones {ones[i]=1}
+ ptValidity:=bgv.NewPlaintext(params,params.MaxLevel());ptValidity.Scale=validityInputScale(params)
+ must(encoder.Encode(ones,ptValidity))
+ fill:=func(dst []*rlwe.Ciphertext,plain []uint64,width int) {
+  for ctIdx:=range dst {
+   slots:=make([]uint64,params.MaxSlots())
+   for local:=0;local<min(layout.votersPerCiphertext,voterCount-ctIdx*layout.votersPerCiphertext);local++ {
+    voter:=ctIdx*layout.votersPerCiphertext+local
+    base:=(local/layout.votersPerRow)*layout.colsPerCiphertext+(local%layout.votersPerRow)*blockSize
+    copy(slots[base:base+width],plain[voter*width:(voter+1)*width])
+   }
+   pt:=bgv.NewPlaintext(params,params.MaxLevel());must(encoder.Encode(slots,pt))
+   input:=must1(encryptor.EncryptNew(pt))
+   valid:=must1(encryptor.EncryptNew(ptValidity))
+   dst[ctIdx]=must1(evaluator.MulRelinNew(valid,input))
+   // One dense aggregate, pessimistically amplified by every possible voter
+   // contribution in its block. This is not independent-sample simulation.
+   screenAmplifyResidual(dst[ctIdx],layout.votersPerCiphertext)
+  }
+ }
+ for p:=0;p<periodCount;p++ {
+  cp,cm:=gatedPeriodPlain(candidatePeriods[p],validity[p],voterCount,candidateWidth)
+  dp,dm:=gatedPeriodPlain(delegationPeriods[p],validity[p],voterCount,delegationWidth)
+  fill(out.candidateInputs[p],cp,candidateWidth);fill(out.candidateRangeMasks[p],cm,candidateWidth)
+  fill(out.delegationInputs[p],dp,delegationWidth);fill(out.delegationRangeMasks[p],dm,delegationWidth)
+ }
+ return out
+}

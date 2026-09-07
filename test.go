@@ -145,6 +145,87 @@ func delegatedMaskedTallyPlain(D [][]uint64, wFlat, tFlat, q []uint64, n, b, k, 
 	return out
 }
 
+// delegatedMaskedTallyFromPeriodsPlain computes the final plaintext reference
+// directly from the period schedules. Unlike delegatedMaskedTallyPlain, it
+// never materializes the n*b candidate or n*k delegation echo-total vectors.
+// It is used by diagnostic-checks=final to keep those diagnostic allocations
+// out of the encrypted tally's live memory.
+func delegatedMaskedTallyFromPeriodsPlain(
+	D [][]uint64,
+	candidatePeriods, delegationPeriods [][]int,
+	validity [][]uint64,
+	q []uint64,
+	n, b, k, T int,
+) []uint64 {
+	assert(len(D) == n, "len(D) must be n")
+	assert(len(q) == n, "len(q) must be n")
+	assert(len(candidatePeriods) == T, "candidate periods must contain T rows")
+	assert(len(delegationPeriods) == T, "delegation periods must contain T rows")
+	assert(len(validity) == T, "validity must contain T rows")
+	for voter := range n {
+		assert(len(D[voter]) == k, "each D row must have k entries")
+	}
+	for period := range T {
+		assert(len(candidatePeriods[period]) == n, "each candidate period must contain n entries")
+		assert(len(delegationPeriods[period]) == n, "each delegation period must contain n entries")
+		assert(len(validity[period]) == n, "each validity period must contain n entries")
+	}
+
+	selectedChoice := func(periods [][]int, voter, width int, counts []uint64) int {
+		clear(counts)
+		current := -1
+		for period := range T {
+			choice := periods[period][voter]
+			assert(choice >= -1 && choice < width, "periodic choice is outside its logical range")
+			bit := validity[period][voter]
+			assert(bit <= 1, "validity value must be boolean")
+			if choice >= 0 && bit == 1 {
+				current = choice
+			}
+			if current >= 0 {
+				counts[current]++
+			}
+		}
+		threshold := uint64(T / 2)
+		selected := -1
+		for choice, count := range counts {
+			if count > threshold {
+				assert(selected == -1, "echo totals must select at most one choice")
+				selected = choice
+			}
+		}
+		return selected
+	}
+
+	delegateSupport := make([]uint64, k)
+	delegationCounts := make([]uint64, k)
+	for voter := range n {
+		if delegate := selectedChoice(delegationPeriods, voter, k, delegationCounts); delegate >= 0 {
+			delegateSupport[delegate] += q[voter]
+		}
+	}
+
+	out := make([]uint64, b)
+	candidateCounts := make([]uint64, b)
+	for voter := range n {
+		candidate := selectedChoice(candidatePeriods, voter, b, candidateCounts)
+		if candidate < 0 {
+			continue
+		}
+
+		weight := uint64(0)
+		if selectedChoice(delegationPeriods, voter, k, delegationCounts) < 0 {
+			weight = q[voter]
+		}
+		for delegate := range k {
+			weight += D[voter][delegate] * delegateSupport[delegate]
+		}
+		out[candidate] += weight
+	}
+
+	return out
+}
+
 func decodePackedBlocks(
 	decryptor *rlwe.Decryptor,
 	encoder *bgv.Encoder,
@@ -360,6 +441,10 @@ func mp_verifyLeadingSlotsCiphertext(
 	parties []party,
 ) {
 	decoded := mp_decodeLeadingSlots(encoder, params, len(expected), ciphertext, cks, parties)
+	verifyLeadingSlots(label, expected, decoded)
+}
+
+func verifyLeadingSlots(label string, expected, decoded []uint64) {
 	assert(len(decoded) == len(expected), fmt.Sprintf("%s length mismatch: expected %d, got %d", label, len(expected), len(decoded)))
 	for i := range expected {
 		assert(decoded[i] == expected[i], fmt.Sprintf("%s mismatch at index %d: expected %d, got %d", label, i, expected[i], decoded[i]))
