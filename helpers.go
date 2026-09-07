@@ -326,6 +326,21 @@ func countPeriodicSubmissions(choices [][]int) int {
 	return count
 }
 
+// balancedReduce combines values in the same balanced order used by the
+// logarithmic-depth affine echo tree.
+func balancedReduce[T any](values []T, combine func(left, right T) T) T {
+	assert(len(values) > 0, "balancedReduce requires at least one value")
+	var reduceRange func(start, end int) T
+	reduceRange = func(start, end int) T {
+		if start == end {
+			return values[start]
+		}
+		middle := (start + end) / 2
+		return combine(reduceRange(start, middle), reduceRange(middle+1, end))
+	}
+	return reduceRange(0, len(values)-1)
+}
+
 // sumUint64 returns the total of v, panicking on overflow so a bad -qmax is
 // caught here rather than as a silent wrap in the plaintext modulus choice.
 func sumUint64(v []uint64) uint64 {

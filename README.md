@@ -12,19 +12,22 @@ This Go program simulates the encrypted voting tally with Lattigo and BGV. It:
 The program currently supports:
 
 - encrypted voter weights;
-- one encrypted registration-time validity bit per voter-period, shared by the
-  candidate and delegation inputs;
+- one incoming encrypted validity bit per voter-period submission, shared by
+  the candidate and delegation inputs;
 - encrypted candidate and delegation range masks;
 - periodic echo updates for missing submissions;
 - tree-based and sequential echo calculations;
 - collective refresh to reduce ciphertext noise;
+- an optional no-refresh mode for parameter experiments;
 - majority selection, delegation, weighted voting, and packed aggregation.
 
 The protocol has voters commit to their validity bits during registration. This
 program simulates those registered bits and encrypts them under the collective
 public key. The tally uses each shared bit to gate both the candidate and
 delegation payloads and their range masks. Invalid inputs have no effect, so the
-echo calculation keeps the previous valid state.
+echo calculation keeps the previous valid state. The program consumes each
+validity ciphertext as its submission is aggregated instead of retaining all
+validity ciphertexts in memory.
 
 ## Setup
 
@@ -62,13 +65,14 @@ You can change these parameters:
 | `--N` | `3` | Number of parties that create keys and decrypt together |
 | `--progress` | `true` | Show progress on stderr |
 | `--echo-mode` | `tree` | Echo method: `tree` or `sequential` |
+| `--refresh-mode` | `collective` | Refresh strategy: `collective` or `none` |
 | `--echo-refresh-interval` | `1` | Number of sequential updates between refreshes |
 
 ### Echo strategies
 
 Tree mode combines periods in a balanced tree. Its multiplication depth is
-`ceil(log2(T))`. Afterward, the parties collectively refresh the candidate and
-delegation totals:
+`ceil(log2(T))`. In collective mode, the parties afterward refresh the
+candidate and delegation totals:
 
 ```bash
 go run . --echo-mode=tree
@@ -94,9 +98,27 @@ go run . --echo-mode=sequential --echo-refresh-interval=1
 go run . --echo-mode=sequential --echo-refresh-interval=2
 ```
 
-Both modes refresh the final echo totals before majority selection. Both use the
-same encrypted inputs, encrypted range masks, plaintext checks, and remaining
-tally steps.
+In collective refresh mode, both echo strategies refresh the final echo totals
+before majority selection. Both strategies use the same encrypted inputs,
+encrypted range masks, plaintext checks, and remaining tally steps.
+
+### No-refresh experiments
+
+The current `LogN=14` parameters use `logQ=377` and `logP=61`, for
+`logQP=438`. This matches the modulus budget of Lattigo's 128-bit-security
+example while keeping the same eight Q limbs and one P limb.
+
+For the default five-period tree experiment, the program can complete without
+an interactive refresh:
+
+```bash
+go run . --echo-mode=tree --refresh-mode=none
+```
+
+This mode also disables intermediate sequential refreshes and ignores
+`--echo-refresh-interval`. It is an experimental option, not a guarantee that
+every larger value of `n`, `T`, or `qmax` has enough noise budget. Collective
+mode remains the default.
 
 ## Results and instrumentation
 
@@ -109,9 +131,21 @@ Every run creates a new timestamped directory under `runs/`. It contains:
 - CPU and memory measurements; and
 - crash information if the run fails.
 
-`meta.json` records the echo mode and refresh interval. In `ops.csv`, the input
-phase's `EncryptNew` count includes the range-mask encryptions. Echo and refresh
-operations are also counted there.
+`components.csv` separates the streamed-input phase into lightweight timing
+totals for encrypted-zero aggregate initialization, simulated client
+encoding/encryption, and server-side validity gating/aggregation. These
+component timers do not force garbage collection or create phase boundaries in
+the per-voter loop. They are non-overlapping parts of Phase 4.1 and must not be
+added to the full phase time again. Their sum can be slightly smaller than the
+outer phase because ordinary loop, packing, progress, and instrumentation
+overhead is not assigned to a component.
+
+`meta.json` records the echo mode, refresh mode, and refresh interval. The
+streamed-input phase separately counts simulated validity encryption,
+validity-gating multiplications, and payload/range-mask encryption. The
+validity-ciphertext row in `objects.csv` estimates total input traffic; those
+ciphertexts are not all live at the same time. Echo and refresh operations are
+also counted.
 
 Each run creates new random inputs. A single run is useful for checking that the
 program works, but it is not a fair performance comparison with earlier runs.
@@ -123,6 +157,10 @@ and document a secure noise-flooding setting.
 ## Validation
 
 ```bash
-gofmt -w main.go helpers.go instrumentation.go multiparty_helpers.go test.go
+gofmt -w *.go
 go test ./...
 ```
+
+The deterministic unit tests cover shared validity behavior, invalid-input
+echo, balanced-versus-sequential echo results, and the first packing boundary
+that requires more than one ciphertext.

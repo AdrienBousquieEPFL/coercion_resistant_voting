@@ -34,6 +34,7 @@ type runMeta struct {
 	K                   int            `json:"k"`
 	T                   int            `json:"T"`
 	EchoMode            string         `json:"echo_mode"`
+	RefreshMode         string         `json:"refresh_mode"`
 	EchoRefreshInterval int            `json:"echo_refresh_interval"`
 	BGV                 *bgvParamsMeta `json:"bgv,omitempty"`
 	GitSHA              string         `json:"git_sha"`
@@ -72,6 +73,17 @@ type phaseRecord struct {
 	HeapSysPeakMiB float64
 	RSSPeakMiB     float64
 	GCCount        uint32
+}
+
+// componentTimingRecord captures lightweight, accumulated timings inside a
+// larger phase. Unlike StartPhase, recording a component does not force a GC,
+// sample memory, or change the active phase. Components can therefore be timed
+// repeatedly inside a hot streaming loop without perturbing every iteration.
+type componentTimingRecord struct {
+	Name   string
+	WallMs float64
+	CPUMs  float64
+	Notes  string
 }
 
 type objectRecord struct {
@@ -123,6 +135,7 @@ type metricsRecorder struct {
 	currentPhase atomic.Value // string
 	meta         runMeta
 	phases       []phaseRecord
+	components   []componentTimingRecord
 	objects      []objectRecord
 	samples      []sampleRecord
 	cpuSamples   []cpuSampleRecord
@@ -309,12 +322,13 @@ func flushCheckpoint() {
 		return
 	}
 	for name, fn := range map[string]func() error{
-		"meta.json":   writeMeta,
-		"phases.csv":  writePhases,
-		"objects.csv": writeObjects,
-		"samples.csv": writeSamples,
-		"cpu.csv":     writeCPU,
-		"ops.csv":     writeOps,
+		"meta.json":      writeMeta,
+		"phases.csv":     writePhases,
+		"components.csv": writeComponents,
+		"objects.csv":    writeObjects,
+		"samples.csv":    writeSamples,
+		"cpu.csv":        writeCPU,
+		"ops.csv":        writeOps,
 	} {
 		if err := fn(); err != nil {
 			fmt.Fprintf(os.Stderr, "[metrics] checkpoint %s failed: %v\n", name, err)
@@ -573,6 +587,24 @@ func RecordSized(name string, count int, eachBytes int64, notes string) {
 	})
 }
 
+// RecordComponentTiming stores an accumulated timing measured with time.Now
+// and cpuTime by the caller. Component timings are written separately from
+// phases because they may partition or overlap a containing phase and must not
+// be added to the phase totals a second time.
+func RecordComponentTiming(name string, wall, cpu time.Duration, notes string) {
+	if rec == nil {
+		return
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	rec.components = append(rec.components, componentTimingRecord{
+		Name:   name,
+		WallMs: msFromDur(wall),
+		CPUMs:  msFromDur(cpu),
+		Notes:  notes,
+	})
+}
+
 func FinalizeMetrics() error {
 	if rec == nil {
 		return nil
@@ -588,6 +620,9 @@ func FinalizeMetrics() error {
 	if err := writePhases(); err != nil {
 		return err
 	}
+	if err := writeComponents(); err != nil {
+		return err
+	}
 	if err := writeObjects(); err != nil {
 		return err
 	}
@@ -600,8 +635,8 @@ func FinalizeMetrics() error {
 	if err := writeOps(); err != nil {
 		return err
 	}
-	fmt.Printf("[metrics] wrote phases=%d objects=%d samples=%d ops=%d to %s\n",
-		len(rec.phases), len(rec.objects), len(rec.samples), opTotal(), rec.runDir)
+	fmt.Printf("[metrics] wrote phases=%d components=%d objects=%d samples=%d ops=%d to %s\n",
+		len(rec.phases), len(rec.components), len(rec.objects), len(rec.samples), opTotal(), rec.runDir)
 	return nil
 }
 
@@ -647,6 +682,25 @@ func writePhases() error {
 			f3(p.HeapSysPeakMiB), f3(p.RSSPeakMiB),
 			strconv.FormatUint(uint64(p.GCCount), 10),
 		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeComponents() error {
+	f, err := os.Create(filepath.Join(rec.runDir, "components.csv"))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	w := csv.NewWriter(f)
+	defer w.Flush()
+	if err := w.Write([]string{"component", "wall_ms", "cpu_ms", "notes"}); err != nil {
+		return err
+	}
+	for _, c := range rec.components {
+		if err := w.Write([]string{c.Name, f3(c.WallMs), f3(c.CPUMs), c.Notes}); err != nil {
 			return err
 		}
 	}

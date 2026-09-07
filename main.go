@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"math/big"
 	"runtime/debug"
 
 	bgvpoly "github.com/tuneinsight/lattigo/v6/circuits/bgv/polynomial"
@@ -26,6 +25,7 @@ func main() {
 	progressFlag := flag.Bool("progress", true, "show progress on stderr")
 	NFlag := flag.Int("N", 3, "number of decryptors")
 	echoModeFlag := flag.String("echo-mode", "tree", "periodic echo evaluation: tree or sequential")
+	refreshModeFlag := flag.String("refresh-mode", "collective", "ciphertext refresh strategy: collective or none")
 	echoRefreshIntervalFlag := flag.Int("echo-refresh-interval", 1, "sequential echo transitions between collective refreshes")
 	flag.Parse()
 
@@ -37,11 +37,15 @@ func main() {
 	progressEnabled = *progressFlag
 	N := *NFlag
 	echoMode := *echoModeFlag
+	refreshMode := *refreshModeFlag
 	echoRefreshInterval := *echoRefreshIntervalFlag
 	assert(echoMode == "tree" || echoMode == "sequential", "echo-mode must be tree or sequential")
-	assert(echoRefreshInterval > 0, "echo-refresh-interval must be > 0")
-	if echoMode == "tree" {
-		// The interval controls only intermediate refreshes in sequential mode.
+	assert(refreshMode == "collective" || refreshMode == "none", "refresh-mode must be collective or none")
+	if echoMode == "sequential" && refreshMode == "collective" {
+		assert(echoRefreshInterval > 0, "echo-refresh-interval must be > 0")
+	} else {
+		// The interval controls only collective intermediate refreshes in
+		// sequential mode.
 		echoRefreshInterval = 0
 	}
 	//D := [][]uint64{{0, 0, 0}, {0, 0, 0}, {0, 0, 1}, {0, 0, 0}, {0, 0, 0}, {1, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 1, 0}}
@@ -54,6 +58,7 @@ func main() {
 		K:                   k,
 		T:                   T,
 		EchoMode:            echoMode,
+		RefreshMode:         refreshMode,
 		EchoRefreshInterval: echoRefreshInterval,
 	})
 	defer func() {
@@ -119,7 +124,10 @@ func main() {
 		LogN: logN, // ring degree N = 2^LogN
 
 		// Option A: let Lattigo generate NTT primes from bit-sizes.
-		LogQ: []int{55, 45, 45, 45, 45, 45, 45, 45}, // ciphertext modulus chain
+		// This uses the full logQP=438 budget of Lattigo's 128-bit-secure
+		// LogN=14 example: logQ=377 plus logP=61. The extra seven Q bits
+		// support the final ciphertext-ciphertext product in no-refresh mode.
+		LogQ: []int{55, 46, 46, 46, 46, 46, 46, 46}, // ciphertext modulus chain
 		LogP: []int{61},                             // special primes for key-switching/relin
 
 		// Option B: provide explicit primes (uncomment and remove LogQ/LogP).
@@ -157,7 +165,7 @@ func main() {
 	fmt.Println("Slots =", params.MaxSlots())
 	fmt.Println("Dimensions =", params.MaxDimensions())
 	fmt.Println("Total voting power sum(q) =", qSum)
-	fmt.Println("Echo mode =", echoMode, "sequential refresh interval =", echoRefreshInterval)
+	fmt.Println("Echo mode =", echoMode, "refresh mode =", refreshMode, "sequential refresh interval =", echoRefreshInterval)
 	assert(qSum < params.PlaintextModulus(),
 		fmt.Sprintf("sum(q)=%d must be < plaintext modulus t=%d", qSum, params.PlaintextModulus()))
 
@@ -243,11 +251,11 @@ func main() {
 
 	// 3. Pre-election input preparation.
 	//
-	// The plaintext weights and validity bits are available here only because
-	// this executable simulates registration and later plaintext correctness
-	// checks. The tally begins below with both inputs already encrypted under the
+	// The plaintext weights are available here only because this executable
+	// simulates pre-election input preparation and plaintext correctness checks.
+	// The tally begins below with the weight state already encrypted under the
 	// collective public key.
-	phInputs := StartPhase("3-pre-election-weight-and-validity-input-preparation")
+	phInputs := StartPhase("3-pre-election-weight-input-preparation")
 
 	// q_ext replicates each voter's power q_i across the k delegation slots of
 	// their block. It is encrypted once per packed ciphertext under the
@@ -290,159 +298,54 @@ func main() {
 		assert(qBaseCiphertexts[ctIdx].Level() == qExtCiphertexts[ctIdx].Level(), "base-slot projection must preserve the weight level")
 	}
 
-	// Registration provides one encrypted scalar validity bit per voter-period.
-	// Replicate that bit across the SIMD slots so the exact same ciphertext can
-	// gate the candidate and delegation payloads and both range masks.
-	encryptValidity := func(validity [][]uint64) [][]*rlwe.Ciphertext {
-		ciphertexts := make([][]*rlwe.Ciphertext, T)
-		ptValidity := bgv.NewPlaintext(params, params.MaxLevel())
-		// For BFV-style scale-invariant tensoring, ct*ct has scale
-		// s0*s1/(-Q mod t). Give e the compensating scale (-Q mod t), so
-		// e*x returns at x's default scale and can enter the existing affine
-		// echo circuit without scale-matching noise.
-		qModT := new(big.Int).Mod(params.RingQ().ModulusAtLevel[params.MaxLevel()], new(big.Int).SetUint64(params.PlaintextModulus())).Uint64()
-		validityScale := params.NewScale(params.PlaintextModulus() - qModT)
-		ptValidity.Scale = validityScale
-		assert(bgv.MulScaleInvariant(params, validityScale, params.DefaultScale(), params.MaxLevel()).Cmp(params.DefaultScale()) == 0, "validity scale must compensate scale-invariant tensoring")
-		for period := range T {
-			ciphertexts[period] = make([]*rlwe.Ciphertext, n)
-			for voter := range n {
-				bit := validity[period][voter]
-				assert(bit <= 1, "registration validity bit must be boolean")
-				slots := make([]uint64, params.MaxSlots())
-				for slot := range slots {
-					slots[slot] = bit
-				}
-				CountOp("EncodeValidity")
-				must(encoder.Encode(slots, ptValidity))
-				CountOp("EncryptValidity")
-				ciphertexts[period][voter] = must1(encryptor.EncryptNew(ptValidity))
-			}
-		}
-		return ciphertexts
-	}
-
-	validityCiphertexts := encryptValidity(validity)
 	phInputs.Stop()
 	RecordCiphertexts("qExtCiphertexts", qExtCiphertexts)
 	RecordCiphertexts("qBaseCiphertexts", qBaseCiphertexts)
-	flattenValidityCiphertexts := func(grid [][]*rlwe.Ciphertext) []*rlwe.Ciphertext {
-		flat := make([]*rlwe.Ciphertext, 0)
-		for period := range grid {
-			for _, ct := range grid[period] {
-				if ct != nil {
-					flat = append(flat, ct)
-				}
-			}
-		}
-		return flat
-	}
-	RecordCiphertexts("validityCiphertexts", flattenValidityCiphertexts(validityCiphertexts))
 	mp_verifyBaseSlotCiphertexts("encrypted q base projection", encoder, params, layout, blockSize, q, qBaseCiphertexts, &cks, P)
 
-	// 4. Tally. From this boundary onward, the homomorphic computation consumes
-	// the already-prepared encrypted weight and validity state. Plaintext q and
-	// validity bits appear only in simulation-only verification calls.
-	// 4.1 - Encrypt each submitted payload and range mask, gate both with the
-	// same registration-time validity ciphertext, and aggregate by period.
-	phEncrypt := StartPhase("4.1-tally-validity-gating-and-period-aggregation")
-
-	zeroSlots := make([]uint64, params.MaxSlots())
-	ptZero := bgv.NewPlaintext(params, params.MaxLevel())
-	CountOp("Encode")
-	must(encoder.Encode(zeroSlots, ptZero))
-
-	newEncryptedPeriodGrid := func() [][]*rlwe.Ciphertext {
-		grid := make([][]*rlwe.Ciphertext, T)
-		for period := range T {
-			grid[period] = make([]*rlwe.Ciphertext, layout.ciphertextCount)
-			for ctIdx := range layout.ciphertextCount {
-				CountOp("EncryptNew")
-				grid[period][ctIdx] = must1(encryptor.EncryptNew(ptZero))
-			}
-		}
-		return grid
-	}
-
-	// Each period has four independently encrypted aggregate inputs: candidate
-	// values, candidate range masks, delegation values, and delegation range
-	// masks. An individual range mask has ones only across the submitting
-	// voter's logical width (b or k); common-block padding and all other voter
-	// blocks remain zero.
-	candidatePeriodInputs := newEncryptedPeriodGrid()
-	candidateRangeMaskCiphertexts := newEncryptedPeriodGrid()
-	delegationPeriodInputs := newEncryptedPeriodGrid()
-	delegationRangeMaskCiphertexts := newEncryptedPeriodGrid()
-
-	slotBuf := make([]uint64, params.MaxSlots())
-	rangeMaskBuf := make([]uint64, params.MaxSlots())
-	ptInput := bgv.NewPlaintext(params, params.MaxLevel())
-	inputCount := countPeriodicSubmissions(candidatePeriods) + countPeriodicSubmissions(delegationPeriods)
-	encProg := NewProgress("4.1-tally-validity-gating-and-period-aggregation", int64(2*inputCount))
-
-	// encryptGateAndAccumulate encrypts one simulated payload or range mask,
-	// multiplies it by its registration-time validity ciphertext, and adds the
-	// temporary result to the appropriate period aggregate. Each call for a
-	// payload has a sibling call for its mask using the exact same validity
-	// ciphertext. The two products are independent and therefore add one common
-	// multiplicative layer.
-	encryptGateAndAccumulate := func(dst []*rlwe.Ciphertext, ctIdx int, slots []uint64, validityCt *rlwe.Ciphertext) {
-		assert(validityCt != nil, "submitted input must have an encrypted validity bit")
-		CountOp("Encode")
-		must(encoder.Encode(slots, ptInput))
-		CountOp("EncryptNew")
-		ct := must1(encryptor.EncryptNew(ptInput))
-		assert(ct.Level() == validityCt.Level(), "validity gating operands must start at the same level")
-		CountOp("MulRelinNew")
-		CountOp("ValidityGate")
-		validCt := must1(evaluator.MulRelinNew(validityCt, ct))
-		assert(validCt.Level() == ct.Level(), "scale-invariant validity gating must preserve the common input level")
-		CountOp("Add")
-		must(evaluator.Add(dst[ctIdx], validCt, dst[ctIdx]))
-		encProg.Inc()
-	}
-
-	for period := range T {
-		for voter := range n {
-			ctIdx := voter / layout.votersPerCiphertext
-			localIdx := voter % layout.votersPerCiphertext
-			rowInCt := localIdx / layout.votersPerRow
-			voterInRow := localIdx % layout.votersPerRow
-			blockStart := rowInCt*layout.colsPerCiphertext + voterInRow*blockSize
-
-			if choice := candidatePeriods[period][voter]; choice >= 0 {
-				validityCt := validityCiphertexts[period][voter]
-				slotBuf[blockStart+choice] = 1
-				encryptGateAndAccumulate(candidatePeriodInputs[period], ctIdx, slotBuf, validityCt)
-				slotBuf[blockStart+choice] = 0
-
-				for offset := 0; offset < b; offset++ {
-					rangeMaskBuf[blockStart+offset] = 1
-				}
-				encryptGateAndAccumulate(candidateRangeMaskCiphertexts[period], ctIdx, rangeMaskBuf, validityCt)
-				for offset := 0; offset < b; offset++ {
-					rangeMaskBuf[blockStart+offset] = 0
-				}
-			}
-
-			if choice := delegationPeriods[period][voter]; choice >= 0 {
-				validityCt := validityCiphertexts[period][voter]
-				slotBuf[blockStart+choice] = 1
-				encryptGateAndAccumulate(delegationPeriodInputs[period], ctIdx, slotBuf, validityCt)
-				slotBuf[blockStart+choice] = 0
-
-				for offset := 0; offset < k; offset++ {
-					rangeMaskBuf[blockStart+offset] = 1
-				}
-				encryptGateAndAccumulate(delegationRangeMaskCiphertexts[period], ctIdx, rangeMaskBuf, validityCt)
-				for offset := 0; offset < k; offset++ {
-					rangeMaskBuf[blockStart+offset] = 0
-				}
-			}
-		}
-	}
-	encProg.Finish()
+	// 4. Tally. The simulator creates each incoming validity ciphertext only
+	// when its voter-period submission is processed. The same ciphertext gates
+	// every present candidate/delegation component and is then discarded.
+	phEncrypt := StartPhase("4.1-streamed-input-reception-and-validity-gating")
+	periodAggregates := streamAndAggregatePeriodInputs(
+		params, encoder, encryptor, evaluator, layout, blockSize, b, k,
+		candidatePeriods, delegationPeriods, validity,
+	)
 	phEncrypt.Stop()
+	RecordComponentTiming(
+		"4.1-aggregate-initialization",
+		periodAggregates.aggregateInitWall,
+		periodAggregates.aggregateInitCPU,
+		"server-side creation of encrypted zero period aggregates; excludes streamed voter inputs",
+	)
+	RecordComponentTiming(
+		"4.1-simulated-client-input-preparation",
+		periodAggregates.clientPreparationWall,
+		periodAggregates.clientPreparationCPU,
+		"encoding and encryption of incoming validity, payload, and range-mask ciphertexts; excluded from server ingestion time",
+	)
+	RecordComponentTiming(
+		"4.1-server-validity-gating-and-aggregation",
+		periodAggregates.serverIngestionWall,
+		periodAggregates.serverIngestionCPU,
+		"ciphertext validity gates and additions into period aggregates; contains no input encoding or encryption",
+	)
+	fmt.Printf(
+		"Input reception components: aggregate initialization=%s, simulated client preparation=%s, server gating/aggregation=%s\n",
+		periodAggregates.aggregateInitWall,
+		periodAggregates.clientPreparationWall,
+		periodAggregates.serverIngestionWall,
+	)
+	candidatePeriodInputs := periodAggregates.candidateInputs
+	candidateRangeMaskCiphertexts := periodAggregates.candidateRangeMasks
+	delegationPeriodInputs := periodAggregates.delegationInputs
+	delegationRangeMaskCiphertexts := periodAggregates.delegationRangeMasks
+	RecordSized(
+		"validity_ciphertexts_received",
+		periodAggregates.validityCiphertextCount,
+		periodAggregates.validityCiphertextBytes,
+		"serialized input traffic estimate; ciphertexts are consumed one at a time and are not retained",
+	)
 
 	flattenPeriodGrid := func(grid [][]*rlwe.Ciphertext) []*rlwe.Ciphertext {
 		flat := make([]*rlwe.Ciphertext, 0, T*layout.ciphertextCount)
@@ -537,23 +440,19 @@ func main() {
 
 		totals := make([]*rlwe.Ciphertext, layout.ciphertextCount)
 		for ctIdx := range layout.ciphertextCount {
-			var composeRange func(start, end int) echoSegment
-			composeRange = func(start, end int) echoSegment {
-				if start == end {
-					return echoSegment{
-						a: oneMinusMasks[start][ctIdx],
-						b: inputs[start][ctIdx],
-						c: oneMinusMasks[start][ctIdx],
-						d: inputs[start][ctIdx],
-					}
+			segments := make([]echoSegment, T)
+			for period := range T {
+				segments[period] = echoSegment{
+					a: oneMinusMasks[period][ctIdx],
+					b: inputs[period][ctIdx],
+					c: oneMinusMasks[period][ctIdx],
+					d: inputs[period][ctIdx],
 				}
-				middle := (start + end) / 2
-				return compose(composeRange(start, middle), composeRange(middle+1, end))
 			}
 
 			// The initial state is u^-1=0 and total^-1=0, so the completed
 			// segment's d component is exactly total^(T-1).
-			totals[ctIdx] = composeRange(0, T-1).d
+			totals[ctIdx] = balancedReduce(segments, compose).d
 		}
 
 		return totals
@@ -584,7 +483,7 @@ func main() {
 			}
 
 			transitionsSinceRefresh++
-			if period < T-1 && transitionsSinceRefresh == echoRefreshInterval {
+			if refreshMode == "collective" && period < T-1 && transitionsSinceRefresh == echoRefreshInterval {
 				CountOp("SequentialStateRefreshBoundary")
 				for ctIdx := range current {
 					current[ctIdx] = collectiveRefresh(current[ctIdx], P, params, crs)
@@ -606,13 +505,15 @@ func main() {
 		dCiphertexts = applyPeriodicEchoSequential(delegationPeriodInputs, delegationOneMinusMasks)
 	}
 
-	// Both strategies return the same encrypted total. Refresh it once before
-	// the shared majority-selection pipeline; tree mode needs this after its
-	// wider circuit, and sequential mode needs it after accumulating all u^p.
-	CountOp("FinalEchoRefreshBoundary")
-	for ctIdx := range layout.ciphertextCount {
-		vCiphertexts[ctIdx] = collectiveRefresh(vCiphertexts[ctIdx], P, params, crs)
-		dCiphertexts[ctIdx] = collectiveRefresh(dCiphertexts[ctIdx], P, params, crs)
+	// In collective mode, refresh the completed echo totals before the shared
+	// majority-selection pipeline. No-refresh mode deliberately skips this
+	// boundary so parameter sufficiency can be tested end to end.
+	if refreshMode == "collective" {
+		CountOp("FinalEchoRefreshBoundary")
+		for ctIdx := range layout.ciphertextCount {
+			vCiphertexts[ctIdx] = collectiveRefresh(vCiphertexts[ctIdx], P, params, crs)
+			dCiphertexts[ctIdx] = collectiveRefresh(dCiphertexts[ctIdx], P, params, crs)
+		}
 	}
 	phEcho.Stop()
 	RecordCiphertexts("vCiphertexts", vCiphertexts)
