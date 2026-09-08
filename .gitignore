@@ -4,6 +4,8 @@
 /experiments/results/
 /experiments/validation/
 /analysis/
+/experiments/REDESIGN_VALIDATION.md
+/experiments/STREAMING_FLOW_VALIDATION.md
 
 # Python caches
 __pycache__/

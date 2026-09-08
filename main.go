@@ -100,6 +100,7 @@ func main() {
 	//v := []uint64{2, 7, 1, 8, 7, 2, 8, 1, 6, 3, 2, 7, 3, 6, 1, 8, 6, 3, 5, 4}
 
 	InitMetrics(runMeta{
+		TallyFlow:            "period-streaming-midpoint-tree-v1",
 		OutputRoot:           *outputRootFlag,
 		ParameterProfile:     selectedProfile,
 		WorkloadSeed:         *workloadSeedFlag,
@@ -365,95 +366,7 @@ func main() {
 		RecordCiphertexts("benchmarkInputFixtures", []*rlwe.Ciphertext{benchmarkInputs.validity, benchmarkInputs.input})
 	}
 
-	// 4. Tally. The simulator creates each incoming validity ciphertext only
-	// when its voter-period submission is processed. The same ciphertext gates
-	// every present candidate/delegation component and is then discarded.
-	phEncrypt := StartPhase("4.1-streamed-input-reception-and-validity-gating")
-	periodAggregates := streamAndAggregatePeriodInputs(
-		params, encoder, encryptor, evaluator, layout, blockSize, b, k,
-		n, T, candidatePeriods, delegationPeriods, validity, benchmarkSampleVoters, benchmarkInputs,
-	)
-	phEncrypt.Stop()
-	RecordComponentTiming(
-		"4.1-aggregate-initialization",
-		periodAggregates.aggregateInitWall,
-		periodAggregates.aggregateInitCPU,
-		"server-side creation of encrypted zero period aggregates; excludes streamed voter inputs",
-	)
-	RecordComponentTiming(
-		"4.1-simulated-client-input-preparation",
-		periodAggregates.clientPreparationWall,
-		periodAggregates.clientPreparationCPU,
-		fmt.Sprintf("execution-mode=%s; encoding and encryption of incoming validity, payload, and range-mask ciphertexts; excluded from server ingestion time", map[bool]string{false: "fresh", true: "sampled-server-benchmark"}[benchmarkMode]),
-	)
-	RecordComponentTiming(
-		"4.1-server-validity-gating-and-aggregation",
-		periodAggregates.serverIngestionWall,
-		periodAggregates.serverIngestionCPU,
-		"ciphertext validity gates and additions into period aggregates; contains no input encoding or encryption",
-	)
-	fmt.Printf(
-		"Input reception components: aggregate initialization=%s, simulated client preparation=%s, server gating/aggregation=%s\n",
-		periodAggregates.aggregateInitWall,
-		periodAggregates.clientPreparationWall,
-		periodAggregates.serverIngestionWall,
-	)
-	if benchmarkMode {
-		estimatedAggregation := time.Duration(float64(periodAggregates.serverIngestionWall) * float64(n*T) / float64(benchmarkSampleVoters))
-		RecordComponentTiming(
-			"4.1-estimated-full-server-validity-gating-and-aggregation",
-			estimatedAggregation,
-			time.Duration(float64(periodAggregates.serverIngestionCPU)*float64(n*T)/float64(benchmarkSampleVoters)),
-			fmt.Sprintf("extrapolated from %d combined voter-period samples to n*T=%d; estimate, not directly measured", benchmarkSampleVoters, n*T),
-		)
-		fmt.Printf("Estimated full server gating/aggregation for n*T=%d: %s\n", n*T, estimatedAggregation)
-	}
-	candidatePeriodInputs := periodAggregates.candidateInputs
-	candidateRangeMaskCiphertexts := periodAggregates.candidateRangeMasks
-	delegationPeriodInputs := periodAggregates.delegationInputs
-	delegationRangeMaskCiphertexts := periodAggregates.delegationRangeMasks
-	if benchmarkMode {
-		RecordSized(
-			"sampled_validity_ciphertexts",
-			periodAggregates.validityCiphertextCount,
-			periodAggregates.validityCiphertextBytes,
-			"benchmark sample count only; not a communication estimate",
-		)
-	} else {
-		RecordSized(
-			"validity_ciphertexts_received",
-			periodAggregates.validityCiphertextCount,
-			periodAggregates.validityCiphertextBytes,
-			"serialized input traffic estimate; ciphertexts are consumed one at a time and are not retained",
-		)
-	}
-
-	flattenPeriodGrid := func(grid [][]*rlwe.Ciphertext) []*rlwe.Ciphertext {
-		flat := make([]*rlwe.Ciphertext, 0, T*layout.ciphertextCount)
-		for period := range grid {
-			flat = append(flat, grid[period]...)
-		}
-		return flat
-	}
-	RecordCiphertexts("candidatePeriodInputs", flattenPeriodGrid(candidatePeriodInputs))
-	RecordCiphertexts("candidateRangeMaskCiphertexts", flattenPeriodGrid(candidateRangeMaskCiphertexts))
-	RecordCiphertexts("delegationPeriodInputs", flattenPeriodGrid(delegationPeriodInputs))
-	RecordCiphertexts("delegationRangeMaskCiphertexts", flattenPeriodGrid(delegationRangeMaskCiphertexts))
-	if runIntermediateChecks {
-		for period := range T {
-			candidatePayloadPlain, candidateMaskPlain := gatedPeriodPlain(candidatePeriods[period], validity[period], n, b)
-			delegationPayloadPlain, delegationMaskPlain := gatedPeriodPlain(delegationPeriods[period], validity[period], n, k)
-			mp_verifyPackedCiphertexts(fmt.Sprintf("candidate gated payload period %d", period), encoder, params, layout, blockSize, b, candidatePayloadPlain, candidatePeriodInputs[period], &cks, P)
-			mp_verifyPackedCiphertexts(fmt.Sprintf("candidate gated range mask period %d", period), encoder, params, layout, blockSize, b, candidateMaskPlain, candidateRangeMaskCiphertexts[period], &cks, P)
-			mp_verifyPackedCiphertexts(fmt.Sprintf("delegation gated payload period %d", period), encoder, params, layout, blockSize, k, delegationPayloadPlain, delegationPeriodInputs[period], &cks, P)
-			mp_verifyPackedCiphertexts(fmt.Sprintf("delegation gated range mask period %d", period), encoder, params, layout, blockSize, k, delegationMaskPlain, delegationRangeMaskCiphertexts[period], &cks, P)
-		}
-	}
-
-	// 4.2 - Apply the encrypted periodic echo recurrence independently to the
-	// candidate and delegation states. The public logical-range vectors below
-	// represent the constant 1 in (1-z^p); they are not per-input range masks.
-	phEcho := StartPhase(fmt.Sprintf("4.2-tally-periodic-echo-%s", echoMode))
+	// 4. Consume one period at a time, closing it through echo before the next.
 	candidateLogicalRanges := make([][]uint64, layout.ciphertextCount)
 	delegationLogicalRanges := make([][]uint64, layout.ciphertextCount)
 	for ctIdx := range layout.ciphertextCount {
@@ -472,133 +385,116 @@ func main() {
 		}
 	}
 
-	buildOneMinusMasks := func(encryptedMasks [][]*rlwe.Ciphertext, logicalRanges [][]uint64) [][]*rlwe.Ciphertext {
-		oneMinusMasks := make([][]*rlwe.Ciphertext, T)
-		for period := range T {
-			oneMinusMasks[period] = make([]*rlwe.Ciphertext, layout.ciphertextCount)
-			for ctIdx := range layout.ciphertextCount {
-				CountOp("MulNew")
-				ctNegMask := must1(evaluator.MulNew(encryptedMasks[period][ctIdx], -1))
-				CountOp("AddNew")
-				oneMinusMasks[period][ctIdx] = must1(evaluator.AddNew(ctNegMask, logicalRanges[ctIdx]))
-			}
-		}
-		return oneMinusMasks
+	newEcho := func() *periodicEchoState {
+		return newPeriodicEchoState(T, layout.ciphertextCount, echoMode, evaluator,
+			func(period int) bool {
+				return refreshMode == "collective" && period > 0 && period < T-1 && period%echoRefreshInterval == 0
+			},
+			func(ct *rlwe.Ciphertext) *rlwe.Ciphertext { return collectiveRefresh(ct, P, params, crs) })
 	}
+	candidateEcho, delegationEcho := newEcho(), newEcho()
+	var inputAccounting encryptedPeriodAggregates
+	for period := range T {
+		phEncrypt := StartPhase("4.1-streamed-input-reception-and-validity-gating")
+		periodAggregates := streamAndAggregatePeriodInputs(
+			params, encoder, encryptor, evaluator, layout, blockSize, b, k,
+			n, T, period, candidatePeriods, delegationPeriods, validity, benchmarkSampleVoters, benchmarkInputs,
+		)
+		phEncrypt.Stop()
+		inputAccounting.aggregateInitWall += periodAggregates.aggregateInitWall
+		inputAccounting.aggregateInitCPU += periodAggregates.aggregateInitCPU
+		inputAccounting.clientPreparationWall += periodAggregates.clientPreparationWall
+		inputAccounting.clientPreparationCPU += periodAggregates.clientPreparationCPU
+		inputAccounting.serverIngestionWall += periodAggregates.serverIngestionWall
+		inputAccounting.serverIngestionCPU += periodAggregates.serverIngestionCPU
+		inputAccounting.validityCiphertextCount += periodAggregates.validityCiphertextCount
+		if periodAggregates.validityCiphertextBytes != 0 {
+			inputAccounting.validityCiphertextBytes = periodAggregates.validityCiphertextBytes
+		}
 
-	mulRelinEcho := func(left, right *rlwe.Ciphertext) *rlwe.Ciphertext {
-		CountOp("MulRelinNew")
-		product := must1(evaluator.MulRelinNew(left, right))
-		assert(product.Level() == min(left.Level(), right.Level()), "scale-invariant echo multiplication must preserve the minimum input level")
-		return product
+		RecordCiphertexts(fmt.Sprintf("candidatePeriodInputs/p%d", period), periodAggregates.candidateInputs)
+		RecordCiphertexts(fmt.Sprintf("candidateRangeMaskCiphertexts/p%d", period), periodAggregates.candidateRangeMasks)
+		RecordCiphertexts(fmt.Sprintf("delegationPeriodInputs/p%d", period), periodAggregates.delegationInputs)
+		RecordCiphertexts(fmt.Sprintf("delegationRangeMaskCiphertexts/p%d", period), periodAggregates.delegationRangeMasks)
+		if runIntermediateChecks {
+			candidatePayloadPlain, candidateMaskPlain := gatedPeriodPlain(candidatePeriods[period], validity[period], n, b)
+			delegationPayloadPlain, delegationMaskPlain := gatedPeriodPlain(delegationPeriods[period], validity[period], n, k)
+			mp_verifyPackedCiphertexts(fmt.Sprintf("candidate gated payload period %d", period), encoder, params, layout, blockSize, b, candidatePayloadPlain, periodAggregates.candidateInputs, &cks, P)
+			mp_verifyPackedCiphertexts(fmt.Sprintf("candidate gated range mask period %d", period), encoder, params, layout, blockSize, b, candidateMaskPlain, periodAggregates.candidateRangeMasks, &cks, P)
+			mp_verifyPackedCiphertexts(fmt.Sprintf("delegation gated payload period %d", period), encoder, params, layout, blockSize, k, delegationPayloadPlain, periodAggregates.delegationInputs, &cks, P)
+			mp_verifyPackedCiphertexts(fmt.Sprintf("delegation gated range mask period %d", period), encoder, params, layout, blockSize, k, delegationMaskPlain, periodAggregates.delegationRangeMasks, &cks, P)
+		}
+		phEcho := StartPhase(fmt.Sprintf("4.2-tally-periodic-echo-%s", echoMode))
+		candidateEcho.ClosePeriod(periodAggregates.candidateInputs, periodAggregates.candidateRangeMasks, candidateLogicalRanges)
+		delegationEcho.ClosePeriod(periodAggregates.delegationInputs, periodAggregates.delegationRangeMasks, delegationLogicalRanges)
+		// No period grids are retained by main. Echo owns only its running state
+		// or completed tree segments; the next iteration creates fresh zeros.
+		periodAggregates = encryptedPeriodAggregates{}
+		phEcho.Stop()
 	}
-
-	applyPeriodicEchoTree := func(inputs, oneMinusMasks [][]*rlwe.Ciphertext) []*rlwe.Ciphertext {
-		// Each period is represented as an affine transition on (u, total),
-		// and the transitions are composed in a balanced tree. This evaluates
-		// the exact recurrence with logarithmic multiplicative depth.
-		add := func(left, right *rlwe.Ciphertext) *rlwe.Ciphertext {
-			CountOp("AddNew")
-			return must1(evaluator.AddNew(left, right))
-		}
-
-		// A segment maps an incoming state (u, total) to:
-		//
-		//   u'     = a*u + b
-		//   total' = total + c*u + d
-		//
-		// One period has (a,b,c,d)=(1-z,input,1-z,input). If left is
-		// followed by right, their composition is associative and can therefore
-		// be evaluated as a balanced tree.
-		type echoSegment struct {
-			a, b, c, d *rlwe.Ciphertext
-		}
-		compose := func(left, right echoSegment) echoSegment {
-			a := mulRelinEcho(right.a, left.a)
-			b := add(mulRelinEcho(right.a, left.b), right.b)
-			c := add(left.c, mulRelinEcho(right.c, left.a))
-			d := add(add(left.d, right.d), mulRelinEcho(right.c, left.b))
-			return echoSegment{a: a, b: b, c: c, d: d}
-		}
-
-		totals := make([]*rlwe.Ciphertext, layout.ciphertextCount)
-		for ctIdx := range layout.ciphertextCount {
-			segments := make([]echoSegment, T)
-			for period := range T {
-				segments[period] = echoSegment{
-					a: oneMinusMasks[period][ctIdx],
-					b: inputs[period][ctIdx],
-					c: oneMinusMasks[period][ctIdx],
-					d: inputs[period][ctIdx],
-				}
-			}
-
-			// The initial state is u^-1=0 and total^-1=0, so the completed
-			// segment's d component is exactly total^(T-1).
-			totals[ctIdx] = balancedReduce(segments, compose).d
-		}
-
-		return totals
+	vCiphertexts, dCiphertexts := candidateEcho.Totals(), delegationEcho.Totals()
+	candidateEcho, delegationEcho = nil, nil
+	RecordComponentTiming(
+		"4.1-aggregate-initialization",
+		inputAccounting.aggregateInitWall,
+		inputAccounting.aggregateInitCPU,
+		"server-side creation of encrypted zero period aggregates; excludes streamed voter inputs",
+	)
+	RecordComponentTiming(
+		"4.1-simulated-client-input-preparation",
+		inputAccounting.clientPreparationWall,
+		inputAccounting.clientPreparationCPU,
+		fmt.Sprintf("execution-mode=%s; encoding and encryption of incoming validity, payload, and range-mask ciphertexts; excluded from server ingestion time", map[bool]string{false: "fresh", true: "sampled-server-benchmark"}[benchmarkMode]),
+	)
+	RecordComponentTiming(
+		"4.1-server-validity-gating-and-aggregation",
+		inputAccounting.serverIngestionWall,
+		inputAccounting.serverIngestionCPU,
+		"ciphertext validity gates and additions into period aggregates; contains no input encoding or encryption",
+	)
+	fmt.Printf(
+		"Input reception components: aggregate initialization=%s, simulated client preparation=%s, server gating/aggregation=%s\n",
+		inputAccounting.aggregateInitWall,
+		inputAccounting.clientPreparationWall,
+		inputAccounting.serverIngestionWall,
+	)
+	if benchmarkMode {
+		estimatedAggregation := time.Duration(float64(inputAccounting.serverIngestionWall) * float64(n*T) / float64(benchmarkSampleVoters))
+		RecordComponentTiming(
+			"4.1-estimated-full-server-validity-gating-and-aggregation",
+			estimatedAggregation,
+			time.Duration(float64(inputAccounting.serverIngestionCPU)*float64(n*T)/float64(benchmarkSampleVoters)),
+			fmt.Sprintf("extrapolated from %d combined voter-period samples to n*T=%d; estimate, not directly measured", benchmarkSampleVoters, n*T),
+		)
+		fmt.Printf("Estimated full server gating/aggregation for n*T=%d: %s\n", n*T, estimatedAggregation)
 	}
-
-	applyPeriodicEchoSequential := func(inputs, oneMinusMasks [][]*rlwe.Ciphertext) []*rlwe.Ciphertext {
-		// Literal streaming recurrence:
-		//   u^p = u^(p-1)*(1-z^p) + input^p
-		//   total^p = total^(p-1) + u^p
-		// Only u is refreshed between chunks because it feeds the next
-		// multiplication. The completed total is refreshed by the common final
-		// refresh below.
-		current := make([]*rlwe.Ciphertext, layout.ciphertextCount)
-		totals := make([]*rlwe.Ciphertext, layout.ciphertextCount)
-		for ctIdx := range layout.ciphertextCount {
-			current[ctIdx] = inputs[0][ctIdx].CopyNew()
-			totals[ctIdx] = current[ctIdx].CopyNew()
-		}
-
-		transitionsSinceRefresh := 0
-		for period := 1; period < T; period++ {
-			for ctIdx := range layout.ciphertextCount {
-				carried := mulRelinEcho(current[ctIdx], oneMinusMasks[period][ctIdx])
-				CountOp("AddNew")
-				current[ctIdx] = must1(evaluator.AddNew(carried, inputs[period][ctIdx]))
-				CountOp("Add")
-				must(evaluator.Add(totals[ctIdx], current[ctIdx], totals[ctIdx]))
-			}
-
-			transitionsSinceRefresh++
-			if refreshMode == "collective" && period < T-1 && transitionsSinceRefresh == echoRefreshInterval {
-				CountOp("SequentialStateRefreshBoundary")
-				for ctIdx := range current {
-					current[ctIdx] = collectiveRefresh(current[ctIdx], P, params, crs)
-				}
-				transitionsSinceRefresh = 0
-			}
-		}
-		return totals
-	}
-
-	candidateOneMinusMasks := buildOneMinusMasks(candidateRangeMaskCiphertexts, candidateLogicalRanges)
-	delegationOneMinusMasks := buildOneMinusMasks(delegationRangeMaskCiphertexts, delegationLogicalRanges)
-	var vCiphertexts, dCiphertexts []*rlwe.Ciphertext
-	if echoMode == "tree" {
-		vCiphertexts = applyPeriodicEchoTree(candidatePeriodInputs, candidateOneMinusMasks)
-		dCiphertexts = applyPeriodicEchoTree(delegationPeriodInputs, delegationOneMinusMasks)
+	if benchmarkMode {
+		RecordSized(
+			"sampled_validity_ciphertexts",
+			inputAccounting.validityCiphertextCount,
+			inputAccounting.validityCiphertextBytes,
+			"benchmark sample count only; not a communication estimate",
+		)
 	} else {
-		vCiphertexts = applyPeriodicEchoSequential(candidatePeriodInputs, candidateOneMinusMasks)
-		dCiphertexts = applyPeriodicEchoSequential(delegationPeriodInputs, delegationOneMinusMasks)
+		RecordSized(
+			"validity_ciphertexts_received",
+			inputAccounting.validityCiphertextCount,
+			inputAccounting.validityCiphertextBytes,
+			"serialized input traffic estimate; ciphertexts are consumed one at a time and are not retained",
+		)
 	}
-
 	// In collective mode, refresh the completed echo totals before the shared
 	// majority-selection pipeline. No-refresh mode deliberately skips this
 	// boundary so parameter sufficiency can be tested end to end.
 	if refreshMode == "collective" {
+		phEcho := StartPhase(fmt.Sprintf("4.2-tally-periodic-echo-%s", echoMode))
 		CountOp("FinalEchoRefreshBoundary")
 		for ctIdx := range layout.ciphertextCount {
 			vCiphertexts[ctIdx] = collectiveRefresh(vCiphertexts[ctIdx], P, params, crs)
 			dCiphertexts[ctIdx] = collectiveRefresh(dCiphertexts[ctIdx], P, params, crs)
 		}
+		phEcho.Stop()
 	}
-	phEcho.Stop()
 	RecordCiphertexts("vCiphertexts", vCiphertexts)
 	RecordCiphertexts("dCiphertexts", dCiphertexts)
 	if runIntermediateChecks {

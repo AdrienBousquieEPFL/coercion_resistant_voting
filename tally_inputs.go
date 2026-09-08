@@ -9,13 +9,13 @@ import (
 )
 
 // encryptedPeriodAggregates contains the only persistent ciphertext state
-// produced while receiving voter submissions. Individual validity, payload,
+// produced while receiving submissions for one period. Individual validity, payload,
 // range-mask, and gated-product ciphertexts are transient.
 type encryptedPeriodAggregates struct {
-	candidateInputs         [][]*rlwe.Ciphertext
-	candidateRangeMasks     [][]*rlwe.Ciphertext
-	delegationInputs        [][]*rlwe.Ciphertext
-	delegationRangeMasks    [][]*rlwe.Ciphertext
+	candidateInputs         []*rlwe.Ciphertext
+	candidateRangeMasks     []*rlwe.Ciphertext
+	delegationInputs        []*rlwe.Ciphertext
+	delegationRangeMasks    []*rlwe.Ciphertext
 	validityCiphertextCount int
 	validityCiphertextBytes int64
 	aggregateInitWall       time.Duration
@@ -59,7 +59,9 @@ func prepareBenchmarkInputCiphertexts(params bgv.Parameters, encoder *bgv.Encode
 	return &benchmarkInputCiphertexts{validity: validity, input: input}
 }
 
-// streamAndAggregatePeriodInputs simulates receiving encrypted voter inputs.
+// streamAndAggregatePeriodInputs receives and aggregates one period only.
+// The caller consumes the returned accumulators through echo before calling
+// again for the next period. Benchmark mode ingests fixtures only in period 0.
 // A voter-period sends at most one encrypted validity bit, which is reused for
 // every candidate/delegation payload and range mask present in that submission.
 // The input ciphertexts and gated products are discarded immediately after
@@ -71,13 +73,14 @@ func streamAndAggregatePeriodInputs(
 	evaluator *bgv.Evaluator,
 	layout packingLayout,
 	blockSize, candidateWidth, delegationWidth int,
-	voterCount, periodCount int,
+	voterCount, periodCount, period int,
 	candidatePeriods, delegationPeriods [][]int,
 	validity [][]uint64,
 	benchmarkSampleVoters int,
 	benchmarkInputs *benchmarkInputCiphertexts,
 ) encryptedPeriodAggregates {
 	assert(periodCount > 0, "period count must be > 0")
+	assert(period >= 0 && period < periodCount, "period index out of range")
 	assert(voterCount > 0, "voter count must be > 0")
 	benchmarkMode := benchmarkSampleVoters > 0
 	assert(!benchmarkMode || benchmarkInputs != nil, "sampled benchmark requires prepared input fixtures")
@@ -95,23 +98,20 @@ func streamAndAggregatePeriodInputs(
 	CountOp("Encode")
 	must(encoder.Encode(zeroSlots, ptZero))
 
-	newEncryptedPeriodGrid := func() [][]*rlwe.Ciphertext {
-		grid := make([][]*rlwe.Ciphertext, periodCount)
-		for period := range periodCount {
-			grid[period] = make([]*rlwe.Ciphertext, layout.ciphertextCount)
-			for ctIdx := range layout.ciphertextCount {
-				CountOp("EncryptNew")
-				grid[period][ctIdx] = must1(encryptor.EncryptNew(ptZero))
-			}
+	newEncryptedPeriodAccumulator := func() []*rlwe.Ciphertext {
+		grid := make([]*rlwe.Ciphertext, layout.ciphertextCount)
+		for ctIdx := range grid {
+			CountOp("EncryptNew")
+			grid[ctIdx] = must1(encryptor.EncryptNew(ptZero))
 		}
 		return grid
 	}
 
 	out := encryptedPeriodAggregates{
-		candidateInputs:      newEncryptedPeriodGrid(),
-		candidateRangeMasks:  newEncryptedPeriodGrid(),
-		delegationInputs:     newEncryptedPeriodGrid(),
-		delegationRangeMasks: newEncryptedPeriodGrid(),
+		candidateInputs:      newEncryptedPeriodAccumulator(),
+		candidateRangeMasks:  newEncryptedPeriodAccumulator(),
+		delegationInputs:     newEncryptedPeriodAccumulator(),
+		delegationRangeMasks: newEncryptedPeriodAccumulator(),
 	}
 	out.aggregateInitWall = time.Since(initWallStart)
 	out.aggregateInitCPU = cpuTime() - initCPUStart
@@ -131,9 +131,11 @@ func streamAndAggregatePeriodInputs(
 	if benchmarkMode {
 		// Each sample models one combined candidate/delegation submission, with
 		// two gated ciphertexts (payload and mask) for each component.
-		inputCount = 2 * benchmarkSampleVoters
+		if period == 0 {
+			inputCount = 2 * benchmarkSampleVoters
+		}
 	} else {
-		inputCount = countPeriodicSubmissions(candidatePeriods) + countPeriodicSubmissions(delegationPeriods)
+		inputCount = countPeriodicSubmissions(candidatePeriods[period:period+1]) + countPeriodicSubmissions(delegationPeriods[period:period+1])
 	}
 	progress := NewProgress("4.1-streamed-input-reception-and-validity-gating", int64(2*inputCount))
 
@@ -192,72 +194,69 @@ func streamAndAggregatePeriodInputs(
 		progress.Inc()
 	}
 
-	periodsToProcess := periodCount
-	if benchmarkMode {
-		periodsToProcess = 1
+	if !benchmarkMode {
+		assert(len(candidatePeriods[period]) == voterCount, "candidate period must contain one entry per voter")
+		assert(len(delegationPeriods[period]) == voterCount, "delegation period must contain one entry per voter")
+		assert(len(validity[period]) == voterCount, "validity period must contain one entry per voter")
 	}
-	for period := range periodsToProcess {
-		if !benchmarkMode {
-			assert(len(candidatePeriods[period]) == voterCount, "candidate period must contain one entry per voter")
-			assert(len(delegationPeriods[period]) == voterCount, "delegation period must contain one entry per voter")
-			assert(len(validity[period]) == voterCount, "validity period must contain one entry per voter")
-		}
-		votersToProcess := voterCount
-		if benchmarkMode {
+	votersToProcess := voterCount
+	if benchmarkMode {
+		votersToProcess = 0
+		if period == 0 {
 			votersToProcess = benchmarkSampleVoters
 		}
-		for voter := range votersToProcess {
-			var candidateChoice, delegationChoice int
-			var validityBit uint64
-			if benchmarkMode {
-				// Measure the upper-bound combined-submission path once per sample.
-				candidateChoice, delegationChoice, validityBit = 0, 0, 1
-			} else {
-				candidateChoice = candidatePeriods[period][voter]
-				delegationChoice = delegationPeriods[period][voter]
-				validityBit = validity[period][voter]
+	}
+	for voter := range votersToProcess {
+		var candidateChoice, delegationChoice int
+		var validityBit uint64
+		if benchmarkMode {
+			// Measure the upper-bound combined-submission path once per sample.
+			candidateChoice, delegationChoice, validityBit = 0, 0, 1
+		} else {
+			candidateChoice = candidatePeriods[period][voter]
+			delegationChoice = delegationPeriods[period][voter]
+			validityBit = validity[period][voter]
+		}
+		if candidateChoice < 0 && delegationChoice < 0 {
+			continue
+		}
+
+		// This is the sole live reference to the simulated incoming e for
+		// this voter-period. Both input types below reuse it.
+		validityCt := encryptValidity(validityBit)
+		ctIdx := voter / layout.votersPerCiphertext
+		localIdx := voter % layout.votersPerCiphertext
+		rowInCt := localIdx / layout.votersPerRow
+		voterInRow := localIdx % layout.votersPerRow
+		blockStart := rowInCt*layout.colsPerCiphertext + voterInRow*blockSize
+
+		if candidateChoice >= 0 {
+			assert(candidateChoice < candidateWidth, "candidate choice is outside its logical range")
+			slotBuf[blockStart+candidateChoice] = 1
+			encryptGateAndAccumulate(out.candidateInputs, ctIdx, slotBuf, validityCt)
+			slotBuf[blockStart+candidateChoice] = 0
+
+			for offset := range candidateWidth {
+				rangeMaskBuf[blockStart+offset] = 1
 			}
-			if candidateChoice < 0 && delegationChoice < 0 {
-				continue
+			encryptGateAndAccumulate(out.candidateRangeMasks, ctIdx, rangeMaskBuf, validityCt)
+			for offset := range candidateWidth {
+				rangeMaskBuf[blockStart+offset] = 0
 			}
+		}
 
-			// This is the sole live reference to the simulated incoming e for
-			// this voter-period. Both input types below reuse it.
-			validityCt := encryptValidity(validityBit)
-			ctIdx := voter / layout.votersPerCiphertext
-			localIdx := voter % layout.votersPerCiphertext
-			rowInCt := localIdx / layout.votersPerRow
-			voterInRow := localIdx % layout.votersPerRow
-			blockStart := rowInCt*layout.colsPerCiphertext + voterInRow*blockSize
+		if delegationChoice >= 0 {
+			assert(delegationChoice < delegationWidth, "delegation choice is outside its logical range")
+			slotBuf[blockStart+delegationChoice] = 1
+			encryptGateAndAccumulate(out.delegationInputs, ctIdx, slotBuf, validityCt)
+			slotBuf[blockStart+delegationChoice] = 0
 
-			if candidateChoice >= 0 {
-				assert(candidateChoice < candidateWidth, "candidate choice is outside its logical range")
-				slotBuf[blockStart+candidateChoice] = 1
-				encryptGateAndAccumulate(out.candidateInputs[period], ctIdx, slotBuf, validityCt)
-				slotBuf[blockStart+candidateChoice] = 0
-
-				for offset := range candidateWidth {
-					rangeMaskBuf[blockStart+offset] = 1
-				}
-				encryptGateAndAccumulate(out.candidateRangeMasks[period], ctIdx, rangeMaskBuf, validityCt)
-				for offset := range candidateWidth {
-					rangeMaskBuf[blockStart+offset] = 0
-				}
+			for offset := range delegationWidth {
+				rangeMaskBuf[blockStart+offset] = 1
 			}
-
-			if delegationChoice >= 0 {
-				assert(delegationChoice < delegationWidth, "delegation choice is outside its logical range")
-				slotBuf[blockStart+delegationChoice] = 1
-				encryptGateAndAccumulate(out.delegationInputs[period], ctIdx, slotBuf, validityCt)
-				slotBuf[blockStart+delegationChoice] = 0
-
-				for offset := range delegationWidth {
-					rangeMaskBuf[blockStart+offset] = 1
-				}
-				encryptGateAndAccumulate(out.delegationRangeMasks[period], ctIdx, rangeMaskBuf, validityCt)
-				for offset := range delegationWidth {
-					rangeMaskBuf[blockStart+offset] = 0
-				}
+			encryptGateAndAccumulate(out.delegationRangeMasks, ctIdx, rangeMaskBuf, validityCt)
+			for offset := range delegationWidth {
+				rangeMaskBuf[blockStart+offset] = 0
 			}
 		}
 	}

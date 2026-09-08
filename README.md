@@ -72,7 +72,17 @@ You can change these parameters:
 
 ### Echo strategies
 
-Tree mode combines periods in a balanced tree. Its multiplication depth is
+Both modes collect one period at a time into four encrypted-zero accumulators
+(candidate payload/mask and delegation payload/mask). Submissions are validity
+gated and added on arrival. At period close, echo consumes those accumulators
+before the next period is initialized. No array of all periods' ciphertexts is
+retained; the simulation still prepares plaintext schedules in advance.
+
+Tree mode incrementally combines completed periods in a balanced tree. It uses
+the same midpoint grouping as the previous batch implementation: for `T=5`,
+`((P1,P2),P3)` is combined with `(P4,P5)`. A subtree is merged as soon as its
+last period closes, retaining only a logarithmic number of partial segments.
+No extra prefix tally is evaluated at intermediate period boundaries. Its multiplication depth is
 `ceil(log2(T))`. In collective mode, the parties afterward refresh the
 candidate and delegation totals:
 
@@ -153,9 +163,10 @@ go run . benchmark --n=500000 --sample-voters=1000 --progress=false
 
 It measures one period of combined candidate/delegation submissions for the
 requested sample size, then extrapolates validity-gating and aggregation time
-to `n*T`. It allocates distinct encrypted-zero period aggregates for the full
-target layout and directly runs the complete echo and downstream tally over
-all `T` periods. Fixture preparation is outside the aggregation sample.
+to `n*T`. It initializes the four full-layout accumulators one period at a
+time and closes each through echo. Only the first period ingests fixtures;
+the remaining periods contribute encrypted-zero inputs and masks. The complete
+echo and downstream tally still cover all `T` periods. Fixture preparation is outside the aggregation sample.
 
 The benchmark command automatically uses final-only diagnostics. Its zero
 fixtures and extrapolated aggregation are suitable for server runtime and
@@ -187,6 +198,40 @@ the per-voter loop. They are non-overlapping parts of Phase 4.1 and must not be
 added to the full phase time again. Their sum can be slightly smaller than the
 outer phase because ordinary loop, packing, progress, and instrumentation
 overhead is not assigned to a component.
+
+Multiparty protocols are recorded separately in `components.csv` as
+`multiparty:refresh`, `multiparty:public-key-generation`,
+`multiparty:relinearization-key-generation`, `multiparty:galois-key-generation`,
+`multiparty:threshold-decryption`, and, when enabled,
+`multiparty:diagnostic-threshold-decryption`. Repeated calls accumulate into one
+row per protocol. These measure whole local executions, including party and
+coordinator work; they do not measure network latency or parallel party time.
+
+`phases.csv` keeps inclusive `wall_ms` and `cpu_ms` and adds
+`multiparty_wall_ms` and `multiparty_cpu_ms` for protocol work inside each phase.
+These are overlapping measurements, not additional costs to add to the phase.
+
+The campaign summary reports both server-only computation and a tally time
+that includes refresh:
+
+- `server_observed_wall_ms:<scope>`: accumulator initialization plus server
+  validity gating/aggregation plus phases 4.2–4.7 minus their multiparty time.
+- `tally_refresh_wall_ms`: all intermediate and final collective refresh calls.
+- `tally_observed_wall_ms:<scope>`: the server metric plus refresh time.
+
+Here `<scope>` is `five_input_periods` for normal execution or `one_input_period`
+for benchmark ingestion; downstream computation and initialization still cover
+all T periods. Benchmark five-period projections have separate
+`server_projected_wall_ms:five_input_periods` and
+`tally_projected_wall_ms:five_input_periods` metrics. Setup and final threshold
+decryption remain separate from both tally metrics. Simulated client input
+preparation is excluded. Use final-only diagnostics and disable noise checks
+for runtime measurements; other diagnostic and instrumentation overhead is not
+fully removed by these component timers.
+
+Historical files without multiparty timing columns cannot be separated after
+the fact. Their old server estimates are emitted only with a
+`legacy_server_inclusive_multiparty_excluding_initialization_...` name.
 
 The default one-second background sampling interval is intended only to show
 approximately which phase caused the memory peak. A shorter interval such as
@@ -221,10 +266,12 @@ that requires more than one ciphertext.
 
 ## Runtime experiment campaign
 
-The 75-configuration campaign, exact-prime parameter files, per-`n` launchers,
+The 22-configuration campaign, exact-prime parameter files, per-`n` launchers,
 and parameter-screening workflow are documented in
 [`EXPERIMENTS.md`](EXPERIMENTS.md). Benchmark ingestion starts at
 `n=10000` and covers all voters for one period, with `T=5` downstream.
+The current scope is `b=k=5`: both no-refresh modes at every selected voter
+count, plus sequential refresh intervals 2 and 3 only at 10,000 and 50,000.
 
 Use `--parameter-file=<file>` for a concrete versioned profile,
 `--workload-seed=<seed>` to repeat simulated inputs, and `--output-root=<dir>`
@@ -233,3 +280,10 @@ random. `--noise-check` is an opt-in, secret-assisted diagnostic for synthetic
 experiments; it enables all plaintext checks and must not be used for timing
 or with reused benchmark fixtures. `--describe-parameters` prints a concrete
 profile without generating keys or running the tally.
+
+Period streaming is identified by `tally_flow=period-streaming-midpoint-tree-v1`
+in run metadata. Phases 4.1 and 4.2 repeat for successive periods (with an
+additional 4.2 interval for final refresh when enabled). Sum repeated phase
+rows within a run; the campaign summary does this before calculating medians
+across runs. Phase instrumentation performs its usual GC at each boundary,
+so timing results should not be pooled with the older batch implementation.

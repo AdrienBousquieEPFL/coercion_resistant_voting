@@ -15,7 +15,7 @@ def main():
     with matrix.open() as f:
         reader=csv.DictReader(f); fields=reader.fieldnames; rows=list(reader)
     for row in rows:
-        profile='tree-none-15' if row['strategy']=='tree-none' else 'refresh-14'
+        profile='tree-none-15' if row['refresh_mode']=='none' else 'refresh-14'
         command=[str(args.binary.resolve()),'--describe-parameters',f"--n={row['n']}",f'--parameter-profile={profile}']
         concrete=json.loads(subprocess.check_output(command,text=True))
         path=root/'parameters'/f"{profile}-t{concrete['plaintext_modulus']}.json"
@@ -27,7 +27,7 @@ def main():
             path.write_text(content)
         row['parameter_file']=str(path.relative_to(root))
     with matrix.open('w',newline='') as f:
-        writer=csv.DictWriter(f,fieldnames=fields); writer.writeheader(); writer.writerows(rows)
+        writer=csv.DictWriter(f,fieldnames=fields,lineterminator="\n"); writer.writeheader(); writer.writerows(rows)
     print(f'Resolved parameters for {len(rows)} configurations.')
 
 if __name__=='__main__': main()

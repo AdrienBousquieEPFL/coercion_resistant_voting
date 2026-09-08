@@ -1,6 +1,6 @@
 # Tally experiment campaign
 
-This document describes the current 75-configuration runtime campaign for the
+This document describes the current 22-configuration runtime campaign for the
 Go/Lattigo tally. Its purpose is to compare server runtime, memory, and refresh
 cost across election sizes and echo strategies. ZK proof generation and
 verification are outside this campaign.
@@ -13,30 +13,32 @@ this document explains their scope and interpretation.
 
 ## Configurations
 
-All cases use `T=5`, `qmax=1`, three multiparty participants, Lattigo v6.2.0,
-and the five `(b,k)` shapes `(5,5)`, `(20,20)`, `(100,100)`, `(100,5)`, `(5,100)`.
-Candidate and delegation submissions have separate range masks and share a
-voter-period validity bit.
+All cases use `b=k=5`, `T=5`, `qmax=1`, three multiparty participants, and
+Lattigo v6.2.0. Candidate and delegation submissions have separate range masks
+and share a voter-period validity bit.
 
-| Voters `n` | Input execution | Strategies, each with all five shapes | Cases |
+| Voters `n` | Input execution | Strategies | Cases |
 |---:|---|---|---:|
-| 200 | Fresh, five periods | Tree without refresh | 5 |
-| 500 | Fresh, five periods | Tree without refresh | 5 |
-| 1,000 | Fresh, five periods | Tree without refresh | 5 |
-| 5,000 | Fresh, five periods | Tree without refresh | 5 |
-| 10,000 | Benchmark, one input period | Tree without refresh; tree with collective refresh; sequential with collective refresh at intervals 2 and 3 | 20 |
-| 25,000 | Benchmark, one input period | Tree without refresh | 5 |
-| 50,000 | Benchmark, one input period | Tree without refresh; tree with collective refresh; sequential with collective refresh at intervals 2 and 3 | 20 |
-| 100,000 | Benchmark, one input period | Tree without refresh | 5 |
-| 500,000 | Benchmark, one input period | Tree without refresh | 5 |
-| **Total** | | | **75** |
+| 200 | Fresh, five periods | Tree/no-refresh; sequential/no-refresh | 2 |
+| 500 | Fresh, five periods | Tree/no-refresh; sequential/no-refresh | 2 |
+| 1,000 | Fresh, five periods | Tree/no-refresh; sequential/no-refresh | 2 |
+| 5,000 | Fresh, five periods | Tree/no-refresh; sequential/no-refresh | 2 |
+| 10,000 | Benchmark, one input period | Both no-refresh modes; sequential refresh intervals 2 and 3 | 4 |
+| 25,000 | Benchmark, one input period | Tree/no-refresh; sequential/no-refresh | 2 |
+| 50,000 | Benchmark, one input period | Both no-refresh modes; sequential refresh intervals 2 and 3 | 4 |
+| 100,000 | Benchmark, one input period | Tree/no-refresh; sequential/no-refresh | 2 |
+| 500,000 | Benchmark, one input period | Tree/no-refresh; sequential/no-refresh | 2 |
+| **Total** | | | **22** |
 
-There are 45 tree/no-refresh cases and 30 refreshed comparisons. Sequential
-without refresh and intervals 1 and 4 are outside this campaign.
+There are nine tree/no-refresh cases, nine sequential/no-refresh cases, and
+four sequential/collective comparisons. Tree with refresh, other `(b,k)` shapes,
+and refresh intervals 1 and 4 are outside this campaign. The old 75-case
+campaign and its validation reports are historical; its raw results are retained.
 
 At `n>=10000`, the scripts use `benchmark --sample-voters=n`: the ingestion
 measurement processes all voters for one period. The downstream echo and tally
-still model all five periods and retain target-sized period grids. This is
+still model all five periods, using one set of target-sized period accumulators
+at a time. This is
 not a one-period election. Benchmark mode reuses encrypted-zero input fixtures;
 it measures server throughput and is not evidence about independent-encryption
 noise at the full electorate size. Any five-period ingestion projection is
@@ -51,12 +53,15 @@ is recorded with each run.
 
 | Use | Cases | LogN | Approx. log2 Q | Approx. log2 P | Plaintext modulus `t` | Estimated classical security |
 |---|---:|---:|---:|---:|---:|---:|
-| Tree/no-refresh, `n<=50000` | 35 | 15 | 600 (10 primes) | 61 (1 prime) | 65,537 | 140.45 bits |
-| Tree/no-refresh, `n>=100000` | 10 | 15 | 600 (10 primes) | 61 (1 prime) | 786,433 | 140.45 bits |
-| All refreshed comparisons | 30 | 14 | 312 (6 primes) | 40 (1 prime) | 65,537 | 128.48 bits |
+| Both no-refresh modes, `n<=50000` | 14 | 15 | 600 (10 primes) | 61 (1 prime) | 65,537 | 140.45 bits |
+| Both no-refresh modes, `n>=100000` | 4 | 15 | 600 (10 primes) | 61 (1 prime) | 786,433 | 140.45 bits |
+| Sequential refreshed comparisons | 4 | 14 | 312 (6 primes) | 40 (1 prime) | 65,537 | 128.48 bits |
 
 The corresponding files are `tree-none-15-t65537.json`,
 `tree-none-15-t786433.json`, and `refresh-14-t65537.json`.
+The `tree-none-15` filename is historical: both tree and sequential no-refresh
+now deliberately use these exact same parameters for a direct runtime comparison.
+The mode is selected by the command-line flags, not the parameter filename.
 `refresh-15-t65537.json` is retained as a screened comparison profile; the
 current matrix does not select it.
 
@@ -79,34 +84,32 @@ requirements remain unresolved and could change the parameter requirements.
 
 ## Validation status
 
-The retained evidence contains 40 successful synthetic screening executions:
-25 initial families (including the larger-ring refreshed comparison), followed
-by 15 families using the selected smaller-ring refreshed profile. For the
-current matrix, this amounts to **one trial for each of 25 selected
-parameter/shape/strategy families**, screened at the largest assigned `n`.
-It does not mean 40 trials for every case or full-scale fresh-input validation.
+Sequential/no-refresh parameter development and validation are recorded in
+[REDESIGN_VALIDATION.md](experiments/REDESIGN_VALIDATION.md). The initial
+concentrated synthetic screens at target sizes 50,000 and 500,000 passed with
+the existing 600-bit-Q profile. A shorter nine-prime, approximately 540-bit-Q
+candidate at target 500,000 failed the 20-bit margin requirement (16.60 bits).
+The selected 600-bit chain is a conservative shared comparison profile, not a
+claim of the smallest possible modulus.
 
 The synthetic screen runs the actual downstream computation with compact,
 freshly encrypted validity-gated aggregates and amplified residual error to
-model packing and accumulation. It is a stress model, not an independent
-fresh encryption for each of the target electorate's submissions. The
-concentrated-workload trials passed plaintext checks and a 20-bit minimum
-checkpoint margin. The diagnostic estimates the margin as
-`log2(Q) - log2(2*t) - log2(maximum residual error)` and checks pre-refresh
-states as well as later checkpoints.
+model packing and accumulation. It is a stress model, not an independent fresh
+encryption for every target electorate submission. The diagnostic checks
+plaintext correctness and a 20-bit minimum margin at recorded checkpoints:
+`log2(Q) - log2(2*t) - log2(maximum residual error)`.
 
-Recorded screens are under
-[screen-e1zlx_nf](experiments/validation/screen-e1zlx_nf/) and
-[screen-jeiukmsr](experiments/validation/screen-jeiukmsr/). The validation directory
-also retains small fresh-input and benchmark smoke runs. Go tests and the Python
-campaign tests have passed; these functional checks are not performance results.
+The parameter table records the new per-family trial counts, minimum margins,
+and streaming-flow provenance. Each family is screened at its largest assigned
+voter count; smaller configurations reuse that evidence. Fresh keys and
+ciphertexts are generated each trial. Only workload seeds are reproducible.
+These parameter screens and functional checks are not runtime measurements for
+the full electorate. Larger fresh-input validation and full-scale peak memory
+measurements remain outstanding.
 
-Before treating the selected profiles as fully validated, run repeated noise
-screens across concentrated, balanced, and random workloads (the screening
-script defaults to 20 independent trials per family), and fresh-input checks
-at feasible larger sizes. Encryption and keys are freshly random on each run;
-only the simulated workload seed can be replayed. Full-scale runtime and peak
-memory measurements on the target computer remain outstanding.
+The earlier period-streaming implementation checks remain documented in
+[STREAMING_FLOW_VALIDATION.md](experiments/STREAMING_FLOW_VALIDATION.md). Their
+75-case and width-100 references describe the historical campaign.
 
 ## Running the campaign
 
@@ -144,7 +147,7 @@ done
 ```
 
 Defaults are one warm-up and three measured executions per configuration,
-each in a fresh process: 300 process executions for the complete campaign.
+each in a fresh process: 88 process executions for the complete campaign.
 Warm-ups are excluded from summaries. Workload seeds match across strategies
 for the same dimensions and repetition; encryption randomness does not.
 The runtime scripts use `--diagnostic-checks=final`, without noise diagnostics,
@@ -156,11 +159,14 @@ Useful options, forwarded by every launcher:
 # Restrict a slice and change measured repetition count:
 ./experiments/scripts/run_n10000.sh --shape 5,5 --strategy sequential-i2 --repeats 5
 
+# Preview the new largest sequential/no-refresh case:
+./experiments/scripts/run_n500000.sh --strategy sequential-none --dry-run
+
 # Apply an optional 30-minute cap per process:
 ./experiments/scripts/run_n10000.sh --timeout 1800
 ```
 
-Strategy names are `tree-none`, `tree-collective`, `sequential-i2`, and
+Strategy names are `tree-none`, `sequential-none`, `sequential-i2`, and
 `sequential-i3`. Shape and strategy filters may be repeated. The runtime timeout
 default is **0 (no limit)**; there is no automatic 25-minute prediction gate.
 Failures, missing final correctness results, or timeouts stop that invocation
@@ -177,6 +183,13 @@ Each invocation creates a unique directory under `experiments/results/` with:
 - `measurements-summary.csv`: medians, minima, maxima, and sample counts for
   successful measured executions, generated after a successful campaign.
 
+New runs record `tally_flow=period-streaming-midpoint-tree-v1`. Phases 4.1 and
+4.2 alternate across periods, and final refresh contributes another 4.2 row.
+The summary sums repeated phase timings within each run before computing
+statistics across measured runs. The existing phase instrumentation forces GC
+at boundaries; the increased number of boundaries can affect total runtime.
+Do not pool timings from the old batch flow with the new streaming flow.
+
 Raw runs include metadata, phase/component timings, operation counts, object
 sizes, sampled resource use, and `summary.json`. The summary script can also be
 invoked on an interrupted campaign to summarize only its successful measured
@@ -186,10 +199,24 @@ runs:
 python3 experiments/scripts/summarize.py experiments/results/<campaign-directory>
 ```
 
-Compare server validity gating/aggregation plus downstream phases separately
-from client input encryption, setup, and final threshold decryption. The summary
-labels observed server time with its one- or five-input-period scope and keeps
-five-period projections separate. Do not describe projected ingestion time as
+Use `server_observed_wall_ms:<scope>` for accumulator initialization plus
+server validity gating/aggregation and downstream phases with multiparty time
+removed. Use `tally_observed_wall_ms:<scope>` for the same computation **including
+all refresh calls**, and `tally_refresh_wall_ms` for refresh alone. Here scope is
+`one_input_period` or `five_input_periods`; benchmark initialization and downstream
+work still cover all five periods. Five-period projections are separately named
+`server_projected_wall_ms:five_input_periods` and
+`tally_projected_wall_ms:five_input_periods`.
+
+`components.csv` records local multiparty protocols separately (including their
+coordinator work); collective key generation and final threshold decryption
+are outside both tally metrics. `phases.csv` records the overlapping multiparty
+wall/CPU time within each phase so the summary can subtract it. Diagnostic
+threshold decryptions have their own component. Other diagnostic overhead can
+remain, so timing runs must use final-only diagnostics with noise checks off.
+Older runs without the new timing columns retain only explicitly named legacy
+inclusive estimates. Client input preparation is excluded from both new tally
+metrics. Do not describe projected ingestion time as
 measured full-election time, or benchmark fixture checks as full-scale noise
 validation. Parameter changes are part of the strategy comparison: these runs
 do not isolate the echo algorithm at identical cryptographic parameters.
@@ -210,21 +237,35 @@ V = 2 * floor((R/2)/w)    voters per ciphertext
 C = ceil(n/V)            ciphertext blocks per grid period
 ```
 
-The parameter table records these values. There are four original period grids:
-candidate inputs, candidate range masks, delegation inputs, and delegation
-range masks. Together they contain `4*T*C` ciphertexts. Encrypted weights,
-echo state, keys, and temporaries require additional memory.
+The parameter table records these values. The active period has four packed
+accumulators: candidate inputs, candidate range masks, delegation inputs, and
+delegation range masks. Together they contain `4*C` ciphertexts. A fresh set
+is initialized for each period, so `4*T*C` ciphertexts are still created over
+the full run, but they are not all retained simultaneously.
 
-For `n=500000`, width 100, and the selected no-refresh profile, `V=326` and
-`C=1534`. The four period grids alone contain 30,680 degree-one ciphertexts:
-approximately **161 GB (150 GiB) of polynomial coefficients**. That estimate
-excludes object overhead, evaluation keys, other live ciphertexts, and garbage
-awaiting collection. Benchmark ingestion still retains five-period grids.
+At period close, sequential echo updates its current effective choices and
+running totals. Tree echo keeps completed affine segments `(a,b,c,d)` and
+merges a segment as soon as its final period arrives, preserving the old
+midpoint split. It retains O(log T) segments, each with up to `4*C` ciphertext
+components per candidate/delegation channel (leaf components share pointers).
+There are still `T-1` tree merges per channel/block and no repeated prefix-tally
+calculation. Final refresh and sequential intermediate-refresh boundaries are
+unchanged. Input additions remain sequential.
 
-The target machine has 300 GB RAM, but the largest cases have not yet been
-shown to fit. Run launchers one at a time, inspect measured peak RSS as sizes
-increase, and keep any Go runtime/memory environment settings consistent and
-recorded when comparing results. The current scripts do not set a memory cap.
+For `n=500000`, `b=k=5`, and the selected no-refresh profile, `V=6552` and
+`C=77`. The active period's four accumulators contain 308 degree-one
+ciphertexts: approximately **1.61 GB (1.50 GiB) of polynomial coefficients**.
+The table separates active period accumulators from total allocations across
+periods. This is not peak process memory: echo state, evaluation keys, encrypted
+weights, temporaries, and garbage collection require more memory. In particular,
+the later weight phase precomputes 6,552 full-level target-mask plaintexts for
+this layout (approximately 17.2 GB of coefficients).
+
+The target machine has 300 GB RAM. No 500,000-voter peak RSS has been measured
+for the redesigned campaign. Run launchers one at a time and keep Go runtime
+settings consistent and recorded when comparing modes. The scripts do not set
+a memory cap. The historical width-100 memory estimates do not describe this
+`b=k=5` campaign.
 
 ## Further work outside this campaign
 
@@ -232,4 +273,4 @@ Remaining work includes repeated and larger fresh-input noise validation,
 measured memory feasibility, deployment refresh-noise analysis, and complete
 serialized communication accounting. Packing-boundary experiments and broader
 parameter searches may help choose faster or smaller profiles later. They are
-not additional configurations silently included in the current 75-case matrix.
+not additional configurations silently included in the current 22-case matrix.

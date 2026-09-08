@@ -29,6 +29,7 @@ func thresholdDecrypt(
 	cks *multiparty.KeySwitchProtocol,
 	params bgv.Parameters,
 ) *rlwe.Plaintext {
+	defer timeMultiparty("threshold-decryption")()
 
 	level := ct.Level()
 
@@ -96,6 +97,7 @@ func collectiveRefresh(
 	params bgv.Parameters,
 	crs sampling.PRNG,
 ) *rlwe.Ciphertext {
+	defer timeMultiparty("refresh")()
 	assert(len(parties) > 0, "collective refresh requires at least one party")
 
 	recordNoiseCheckpoint("pre_refresh", []*rlwe.Ciphertext{ct})
@@ -137,6 +139,7 @@ func genparties(params bgv.Parameters, N int) []party {
 }
 
 func execCKGProtocol(params bgv.Parameters, crs sampling.PRNG, P []party) *rlwe.PublicKey {
+	defer timeMultiparty("public-key-generation")()
 
 	l.Println("> Public Enryption Key Generation")
 
@@ -179,6 +182,7 @@ func execCKGProtocol(params bgv.Parameters, crs sampling.PRNG, P []party) *rlwe.
 }
 
 func execRKGProtocol(params bgv.Parameters, crs sampling.PRNG, P []party) *rlwe.RelinearizationKey {
+	defer timeMultiparty("relinearization-key-generation")()
 
 	l.Println("> Relinearization Key Generation")
 
@@ -307,6 +311,7 @@ func execGKGProtocol(
 	galEls []uint64,
 	evkParams rlwe.EvaluationKeyParameters,
 ) []*rlwe.GaloisKey {
+	defer timeMultiparty("galois-key-generation")()
 
 	l.Println("> Galois Key Generation")
 	fmt.Println(galEls)

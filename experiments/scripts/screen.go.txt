@@ -39,16 +39,13 @@ func screenAmplifyResidual(ct *rlwe.Ciphertext,factor int) {
  ringQ.Add(ct.Value[0],decoded.Value,ct.Value[0])
 }
 
-func screenAndAggregatePeriodInputs(params bgv.Parameters,encoder *bgv.Encoder,encryptor *rlwe.Encryptor,evaluator *bgv.Evaluator,layout packingLayout,blockSize,candidateWidth,delegationWidth,voterCount,periodCount int,candidatePeriods,delegationPeriods [][]int,validity [][]uint64,benchmarkSampleVoters int,benchmarkInputs *benchmarkInputCiphertexts) encryptedPeriodAggregates {
+func screenAndAggregatePeriodInputs(params bgv.Parameters,encoder *bgv.Encoder,encryptor *rlwe.Encryptor,evaluator *bgv.Evaluator,layout packingLayout,blockSize,candidateWidth,delegationWidth,voterCount,periodCount,period int,candidatePeriods,delegationPeriods [][]int,validity [][]uint64,benchmarkSampleVoters int,benchmarkInputs *benchmarkInputCiphertexts) encryptedPeriodAggregates {
  assert(benchmarkSampleVoters==0,"noise screening cannot use reused benchmark fixtures")
  assert(*screenTarget>=voterCount,"screen target cannot be smaller than probe")
  rec.meta.ExecutionMode="synthetic-noise-screen"
  fmt.Printf("[screen] target_n=%d probe_n=%d target_ciphertexts=%d workload=%s; synthetic residual amplification\n",*screenTarget,voterCount,screenCiphertextCount(layout),*screenPattern)
  out:=encryptedPeriodAggregates{}
- newGrid:=func()[][]*rlwe.Ciphertext {
-  grid:=make([][]*rlwe.Ciphertext,periodCount)
-  for p:=range grid { grid[p]=make([]*rlwe.Ciphertext,layout.ciphertextCount) };return grid
- }
+ newGrid:=func()[]*rlwe.Ciphertext { return make([]*rlwe.Ciphertext,layout.ciphertextCount) }
  out.candidateInputs,out.candidateRangeMasks=newGrid(),newGrid()
  out.delegationInputs,out.delegationRangeMasks=newGrid(),newGrid()
  ones:=make([]uint64,params.MaxSlots());for i:=range ones {ones[i]=1}
@@ -71,11 +68,12 @@ func screenAndAggregatePeriodInputs(params bgv.Parameters,encoder *bgv.Encoder,e
    screenAmplifyResidual(dst[ctIdx],layout.votersPerCiphertext)
   }
  }
- for p:=0;p<periodCount;p++ {
+ p:=period
+ {
   cp,cm:=gatedPeriodPlain(candidatePeriods[p],validity[p],voterCount,candidateWidth)
   dp,dm:=gatedPeriodPlain(delegationPeriods[p],validity[p],voterCount,delegationWidth)
-  fill(out.candidateInputs[p],cp,candidateWidth);fill(out.candidateRangeMasks[p],cm,candidateWidth)
-  fill(out.delegationInputs[p],dp,delegationWidth);fill(out.delegationRangeMasks[p],dm,delegationWidth)
+  fill(out.candidateInputs,cp,candidateWidth);fill(out.candidateRangeMasks,cm,candidateWidth)
+  fill(out.delegationInputs,dp,delegationWidth);fill(out.delegationRangeMasks,dm,delegationWidth)
  }
  return out
 }

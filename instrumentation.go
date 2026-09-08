@@ -27,6 +27,7 @@ import (
 // runMeta is serialized to meta.json. It captures every parameter needed to
 // reproduce a run and to interpret the other CSVs against fixed inputs.
 type runMeta struct {
+	TallyFlow            string         `json:"tally_flow"`
 	OutputRoot           string         `json:"-"`
 	ParameterProfile     string         `json:"parameter_profile"`
 	ParameterID          string         `json:"parameter_id"`
@@ -74,15 +75,16 @@ type bgvParamsMeta struct {
 }
 
 type phaseRecord struct {
-	Name           string
-	WallMs         float64
-	CPUMs          float64
-	HeapStartMiB   float64
-	HeapEndMiB     float64
-	HeapPeakMiB    float64
-	HeapSysPeakMiB float64
-	RSSPeakMiB     float64
-	GCCount        uint32
+	MultipartyWallMs, MultipartyCPUMs float64
+	Name                              string
+	WallMs                            float64
+	CPUMs                             float64
+	HeapStartMiB                      float64
+	HeapEndMiB                        float64
+	HeapPeakMiB                       float64
+	HeapSysPeakMiB                    float64
+	RSSPeakMiB                        float64
+	GCCount                           uint32
 }
 
 // componentTimingRecord captures lightweight, accumulated timings inside a
@@ -143,28 +145,30 @@ type cpuSampleRecord struct {
 }
 
 type Phase struct {
-	name      string
-	startWall time.Time
-	startCPU  time.Duration
-	startHeap uint64
-	startGC   uint32
-	startSamp int
+	startMultipartyWall, startMultipartyCPU time.Duration
+	name                                    string
+	startWall                               time.Time
+	startCPU                                time.Duration
+	startHeap                               uint64
+	startGC                                 uint32
+	startSamp                               int
 }
 
 type metricsRecorder struct {
-	mu           sync.Mutex
-	runDir       string
-	startTime    time.Time
-	currentPhase atomic.Value // string
-	meta         runMeta
-	phases       []phaseRecord
-	components   []componentTimingRecord
-	objects      []objectRecord
-	samples      []sampleRecord
-	cpuSamples   []cpuSampleRecord
-	opCounts     map[string]map[string]int64 // phase -> op -> count
-	stop         chan struct{}
-	done         chan struct{}
+	multipartyWall, multipartyCPU time.Duration
+	mu                            sync.Mutex
+	runDir                        string
+	startTime                     time.Time
+	currentPhase                  atomic.Value // string
+	meta                          runMeta
+	phases                        []phaseRecord
+	components                    []componentTimingRecord
+	objects                       []objectRecord
+	samples                       []sampleRecord
+	cpuSamples                    []cpuSampleRecord
+	opCounts                      map[string]map[string]int64 // phase -> op -> count
+	stop                          chan struct{}
+	done                          chan struct{}
 }
 
 var rec *metricsRecorder
@@ -410,17 +414,19 @@ func StartPhase(name string) *Phase {
 	rec.currentPhase.Store(name)
 	rec.mu.Lock()
 	startSamp := len(rec.samples)
+	mpWall, mpCPU := rec.multipartyWall, rec.multipartyCPU
 	rec.mu.Unlock()
 	// Flush so that if the next operation is killed (e.g. SIGKILL during a
 	// huge allocation), the on-disk state names the phase that started it.
 	flushCheckpoint()
 	return &Phase{
-		name:      name,
-		startWall: time.Now(),
-		startCPU:  cpuTime(),
-		startHeap: ms.HeapAlloc,
-		startGC:   ms.NumGC,
-		startSamp: startSamp,
+		name:                name,
+		startWall:           time.Now(),
+		startCPU:            cpuTime(),
+		startHeap:           ms.HeapAlloc,
+		startGC:             ms.NumGC,
+		startSamp:           startSamp,
+		startMultipartyWall: mpWall, startMultipartyCPU: mpCPU,
 	}
 }
 
@@ -452,15 +458,17 @@ func (p *Phase) Stop() {
 		}
 	}
 	rec.phases = append(rec.phases, phaseRecord{
-		Name:           p.name,
-		WallMs:         msFromDur(wall),
-		CPUMs:          msFromDur(cpu),
-		HeapStartMiB:   bToMiB(p.startHeap),
-		HeapEndMiB:     bToMiB(ms.HeapAlloc),
-		HeapPeakMiB:    heapPeak,
-		HeapSysPeakMiB: heapSysPeak,
-		RSSPeakMiB:     rssPeak,
-		GCCount:        ms.NumGC - p.startGC,
+		Name:             p.name,
+		MultipartyWallMs: msFromDur(rec.multipartyWall - p.startMultipartyWall),
+		MultipartyCPUMs:  msFromDur(rec.multipartyCPU - p.startMultipartyCPU),
+		WallMs:           msFromDur(wall),
+		CPUMs:            msFromDur(cpu),
+		HeapStartMiB:     bToMiB(p.startHeap),
+		HeapEndMiB:       bToMiB(ms.HeapAlloc),
+		HeapPeakMiB:      heapPeak,
+		HeapSysPeakMiB:   heapSysPeak,
+		RSSPeakMiB:       rssPeak,
+		GCCount:          ms.NumGC - p.startGC,
 	})
 	// Release the lock before flushing — flushCheckpoint takes it itself.
 	rec.mu.Unlock()
@@ -747,7 +755,7 @@ func writePhases() error {
 	w := csv.NewWriter(f)
 	defer w.Flush()
 	if err := w.Write([]string{
-		"phase", "wall_ms", "cpu_ms",
+		"phase", "wall_ms", "cpu_ms", "multiparty_wall_ms", "multiparty_cpu_ms",
 		"heap_start_mib", "heap_end_mib", "heap_peak_mib",
 		"heap_sys_peak_mib", "rss_peak_mib", "gc_count",
 	}); err != nil {
@@ -756,7 +764,7 @@ func writePhases() error {
 	for _, p := range rec.phases {
 		if err := w.Write([]string{
 			p.Name,
-			f3(p.WallMs), f3(p.CPUMs),
+			f3(p.WallMs), f3(p.CPUMs), f3(p.MultipartyWallMs), f3(p.MultipartyCPUMs),
 			f3(p.HeapStartMiB), f3(p.HeapEndMiB), f3(p.HeapPeakMiB),
 			f3(p.HeapSysPeakMiB), f3(p.RSSPeakMiB),
 			strconv.FormatUint(uint64(p.GCCount), 10),
@@ -927,3 +935,37 @@ func msFromDur(d time.Duration) float64 {
 	return float64(d.Microseconds()) / 1000.0
 }
 func f3(v float64) string { return strconv.FormatFloat(v, 'f', 3, 64) }
+
+// timeMultiparty records a whole local protocol execution, including all party
+// and coordinator work. Calls must not nest. Cumulative counters let each phase
+// identify only the protocol time that actually occurred inside its interval;
+// diagnostic decryptions between phases are not subtracted from either phase.
+func timeMultiparty(name string) func() {
+	if rec == nil {
+		return func() {}
+	}
+	recorder := rec
+	if name == "threshold-decryption" && recorder.currentPhase.Load() != "5-threshold-decrypt-verify" {
+		name = "diagnostic-threshold-decryption"
+	}
+	wallStart, cpuStart := time.Now(), cpuTime()
+	return func() {
+		wall, cpu := time.Since(wallStart), cpuTime()-cpuStart
+		recorder.mu.Lock()
+		defer recorder.mu.Unlock()
+		recorder.multipartyWall += wall
+		recorder.multipartyCPU += cpu
+		component := "multiparty:" + name
+		for i := range recorder.components {
+			if recorder.components[i].Name == component {
+				recorder.components[i].WallMs += msFromDur(wall)
+				recorder.components[i].CPUMs += msFromDur(cpu)
+				return
+			}
+		}
+		recorder.components = append(recorder.components, componentTimingRecord{
+			Name: component, WallMs: msFromDur(wall), CPUMs: msFromDur(cpu),
+			Notes: "whole local multiparty protocol, including party and coordinator work; no network latency; overlaps containing phases",
+		})
+	}
+}
