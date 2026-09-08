@@ -16,12 +16,14 @@ def main():
     security={}
     for file in sorted((ROOT/'validation').glob('security*.json')):
         security.update({p['file']:p for p in json.loads(file.read_text())})
+    if (ROOT/'parameter-security.json').exists():
+        security.update({p['file']:p for p in json.loads((ROOT/'parameter-security.json').read_text())})
     screens={}
     for file in args.screens:
         with file.open() as f:
             for row in csv.DictReader(f):
                 meta=Path(row['run_directory'])/'meta.json'
-                row['tally_flow']=json.loads(meta.read_text()).get('tally_flow','pre-streaming') if meta.exists() else 'unknown'
+                row['tally_flow']=json.loads(meta.read_text()).get('tally_flow','pre-streaming') if meta.exists() else row.get('tally_flow','unknown')
                 screens.setdefault(row['family'],[]).append(row)
     fields=['experiment_id','parameter_file','logN','logQ_bits','logP_bits','plaintext_modulus','Q_primes','P_primes','lattice_security_bits','voters_per_ciphertext','ciphertexts','refresh_boundaries','refresh_ciphertexts','ingestion_periods_measured','input_additions_measured_max','active_period_accumulator_ciphertexts','active_period_accumulator_coefficient_gib','total_period_accumulator_ciphertexts_created','synthetic_trials','synthetic_min_margin_bits','synthetic_status']
     with (ROOT/'parameter-table.csv').open('w',newline='') as f:
@@ -30,8 +32,10 @@ def main():
             file=ROOT/row['parameter_file'];p=json.loads(file.read_text())
             n,b,k,T=map(int,[row['n'],row['b'],row['k'],row['T']])
             ring_degree=2**p['logN'];V=2*((ring_degree//2)//max(b,k));C=(n+V-1)//V
-            refresh_boundaries=0 if row['refresh_mode']=='none' else 1 if row['echo_mode']=='tree' else 2
-            refresh_ct=0 if not refresh_boundaries else (2*C if row['echo_mode']=='tree' else 4*C)
+            interval=int(row['refresh_interval'])
+            intermediate=sum(p%interval==0 for p in range(1,T-1)) if row['refresh_mode']!='none' and row['echo_mode']=='sequential' and interval>0 else 0
+            refresh_boundaries=0 if row['refresh_mode']=='none' else 1+intermediate
+            refresh_ct=2*C*refresh_boundaries
             periods=1 if row['execution_mode']=='benchmark' else T
             family=f"{file.stem}-b{b}-k{k}-{row['strategy']}"
             evidence=screens.get(family,[])

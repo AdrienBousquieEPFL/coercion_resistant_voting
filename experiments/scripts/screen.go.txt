@@ -8,12 +8,13 @@ import (
 )
 
 var screenTarget = flag.Int("screen-target-n",500000,"full target voter count for synthetic noise amplification")
-var screenPattern = flag.String("screen-workload","concentrated","random, balanced or concentrated synthetic workload")
+var screenPattern = flag.String("screen-workload","concentrated","random, balanced, concentrated or carry synthetic workload")
 
 func screenWorkload(c,d [][]int,b,k int) {
  if *screenPattern=="random" { return }
- assert(*screenPattern=="concentrated" || *screenPattern=="balanced","invalid screen workload")
+ assert(*screenPattern=="concentrated" || *screenPattern=="balanced" || *screenPattern=="carry","invalid screen workload")
  for p:=range c { for v:=range c[p] {
+  if *screenPattern=="carry" && p%2==1 { c[p][v],d[p][v]=noSubmission,noSubmission; continue }
   if *screenPattern=="concentrated" { c[p][v],d[p][v]=0,0 } else { c[p][v],d[p][v]=v%b,v%k }
  } }
 }
@@ -57,9 +58,10 @@ func screenAndAggregatePeriodInputs(params bgv.Parameters,encoder *bgv.Encoder,e
    }
    pt:=bgv.NewPlaintext(params,params.MaxLevel());must(encoder.Encode(slots,pt))
    dst[ctIdx]=must1(encryptor.EncryptNew(pt))
-   // One dense aggregate, pessimistically amplified by every possible voter
-   // contribution in its block. This is not independent-sample simulation.
-   screenAmplifyResidual(dst[ctIdx],layout.votersPerCiphertext)
+   // One aggregate with residual amplification for the target block's voter
+   // contributions plus its encrypted-zero initializer. This is a synthetic
+   // stress test, not a probabilistic bound or independent-sample simulation.
+   screenAmplifyResidual(dst[ctIdx],min(*screenTarget,layout.votersPerCiphertext)+1)
   }
  }
  p:=period

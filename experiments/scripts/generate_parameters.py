@@ -15,6 +15,13 @@ def main():
     with matrix.open() as f:
         reader=csv.DictReader(f); fields=reader.fieldnames; rows=list(reader)
     for row in rows:
+        if row['parameter_file'].startswith('parameters/aligned-final/'):
+            path=root/row['parameter_file']
+            command=[str(args.binary.resolve()),'--describe-parameters',f"--n={row['n']}",f'--parameter-file={path.resolve()}']
+            concrete=json.loads(subprocess.check_output(command,text=True))
+            if concrete!=json.loads(path.read_text()):
+                raise RuntimeError(f'Concrete parameter round-trip mismatch: {path}')
+            continue
         profile='tree-none-15' if row['refresh_mode']=='none' else 'refresh-14'
         command=[str(args.binary.resolve()),'--describe-parameters',f"--n={row['n']}",f'--parameter-profile={profile}']
         concrete=json.loads(subprocess.check_output(command,text=True))

@@ -43,7 +43,7 @@ class CampaignMatrixTests(unittest.TestCase):
                 self.assertEqual(row['refresh_interval'],'0')
         for n in counts:
             self.assertEqual({r['strategy'] for r in selected_rows(n) if r['refresh_mode']=='none'},{'tree-none','sequential-none'})
-            self.assertEqual(len({r['parameter_file'] for r in selected_rows(n) if r['refresh_mode']=='none'}),1)
+            self.assertEqual(len({r['parameter_file'] for r in selected_rows(n) if r['refresh_mode']=='none'}),2)
         for row in rows:
             self.assertTrue((ROOT/row['parameter_file']).is_file())
             profile=json.loads((ROOT/row['parameter_file']).read_text())
@@ -61,12 +61,16 @@ class CampaignMatrixTests(unittest.TestCase):
                 if n>=10000:self.assertIn(f'--sample-voters={n}',command)
                 else:self.assertFalse(any(c.startswith('--sample-voters=') for c in command))
 
-    def test_sequential_intervals_only_two_and_three(self):
+    def test_only_final_refresh_for_both_modes(self):
         for n in [10000,50000]:
-            sequential=[r for r in selected_rows(n) if r['refresh_mode']=='collective']
-            self.assertEqual(len(sequential),2)
-            self.assertEqual({r['refresh_interval'] for r in sequential},{'2','3'})
-            self.assertTrue(all(r['refresh_mode']=='collective' for r in sequential))
+            refreshed=[r for r in selected_rows(n) if r['refresh_mode']=='collective']
+            self.assertEqual(len(refreshed),2)
+            self.assertEqual({r['strategy'] for r in refreshed},{'tree-final','sequential-final'})
+            for row in refreshed:
+                interval=int(row['refresh_interval'])
+                self.assertEqual(interval,5 if row['echo_mode']=='sequential' else 0)
+                if interval:
+                    self.assertFalse(any(p%interval==0 for p in range(1,int(row['T'])-1)))
 
     def test_runner_preserves_runs_and_excludes_warmups(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -138,12 +138,11 @@ func main() {
 
 	var candidatePeriods, delegationPeriods [][]int
 	if !benchmarkMode {
-		// Retain explicit period schedules so the encrypted tally and plaintext
-		// reference can both model periods with no new submission. The initial
-		// count vectors are only simulation seeds for generating those schedules.
+		// Evaluation uses one nonzero one-hot choice per component and period.
+		// Zero-vote scenarios are outside this workload; the sampled benchmark
+		// retains its separate encrypted-zero fixtures.
 		candidatePeriods = periodicChoicesFromCounts(randomVotingVector(n, b, T), n, b, T)
-		delegationPeriods = periodicChoicesFromCounts(randomDelegationVector(n, k, T), n, k, T)
-		addZeroSubmissionScenario(candidatePeriods, delegationPeriods, b, k)
+		delegationPeriods = periodicChoicesFromCounts(randomVotingVector(n, k, T), n, k, T)
 	}
 
 	// Full plaintext echo vectors are needed only by the intermediate diagnostic

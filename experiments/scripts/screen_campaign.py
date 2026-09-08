@@ -49,7 +49,7 @@ def main():
         for row in cases:
             family=f"{Path(row['parameter_file']).stem}-b{row['b']}-k{row['k']}-{row['strategy']}"
             for repetition in range(args.repeats):
-                pattern=['concentrated','balanced','random'][repetition%3]
+                pattern=['concentrated','balanced','random','carry'][repetition%4]
                 probe_n=max(6,int(row['k'])+1)
                 log=output/f'{family}-{repetition}.log'
                 command=[str(args.binary.resolve()),f'--n={probe_n}',f"--b={row['b']}",f"--k={row['k']}",'--T=5','--N=3','--qmax=1',f"--echo-mode={row['echo_mode']}",f"--refresh-mode={row['refresh_mode']}",f"--echo-refresh-interval={row['refresh_interval']}",f"--parameter-file={ROOT/row['parameter_file']}",f"--screen-target-n={row['n']}",f'--screen-workload={pattern}',f'--workload-seed=screen-{repetition}',f'--output-root={output/"raw"}','--noise-check','--noise-margin-min=20','--progress=false']

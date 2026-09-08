@@ -204,17 +204,6 @@ func submissionMask(candidate, delegation int) uint64 {
 	return 0
 }
 
-// addZeroSubmissionScenario exercises choice, coerced all-zero submission, and
-// replacement for voter zero. Commitments themselves are not simulated.
-func addZeroSubmissionScenario(candidate, delegation [][]int, b, k int) {
-	if len(candidate) < 3 || len(candidate[0]) == 0 {
-		return
-	}
-	candidate[0][0], delegation[0][0] = 0, 0
-	candidate[1][0], delegation[1][0] = zeroSubmission, zeroSubmission
-	candidate[2][0], delegation[2][0] = min(1, b-1), min(1, k-1)
-}
-
 // periodicEchoTotalsPlain evaluates u^p = u^(p-1)*(1-z^p) + input^p.
 // The shared mask updates both components together. A zero component in a real
 // submission clears its previous state; an all-zero submission preserves both.

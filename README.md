@@ -26,14 +26,17 @@ outside this implementation. The simulation freshly encrypts the selected
 inputs under the collective public key, then adds them directly to the period
 tally. There are no validity-bit inputs or validity-gating multiplications.
 
-Each submission contains candidate votes, delegate votes, and a single mask
-covering the full `max(b,k)` voter block. A real submission has a mask of ones
-in that block and replaces both states together; a zero component clears its
-previous state. A coerced submission has zero payloads and a zero mask, so echo
-preserves both previous states. The plaintext simulator uses `-1` for a zero
-component (two `-1`s mean no submission) and a pair of `-2`s to send an explicit
-all-zero submission. Both kinds of submitted ballots use three ciphertexts.
-These sentinels are simulation data, not flags received by the tally server.
+Each regular simulation submission contains one-hot candidate and delegate
+votes and a single encrypted mask of ones covering the full `max(b,k)` voter
+block. Both components use `randomVotingVector` to generate a nonzero choice
+in every period. No zero-vote or missing-submission scenarios are injected.
+The sampled benchmark retains its encrypted-zero fixtures for timing.
+
+All-zero payloads with a zero mask are intended as an anti-coercion mechanism
+and are outside the evaluation workload. Whether a zero component with mask
+one is permitted by the final protocol remains undecided. Low-level helpers
+and tests retain these arithmetic cases without establishing protocol
+admissibility or validating coercion resistance.
 
 ## Setup
 
@@ -277,7 +280,7 @@ and parameter-screening workflow are documented in
 [`EXPERIMENTS.md`](EXPERIMENTS.md). Benchmark ingestion starts at
 `n=10000` and covers all voters for one period, with `T=5` downstream.
 The current scope is `b=k=5`: both no-refresh modes at every selected voter
-count, plus sequential refresh intervals 2 and 3 only at 10,000 and 50,000.
+count, plus tree and sequential final-refresh cases only at 10,000 and 50,000.
 
 Use `--parameter-file=<file>` for a concrete versioned profile,
 `--workload-seed=<seed>` to repeat simulated inputs, and `--output-root=<dir>`

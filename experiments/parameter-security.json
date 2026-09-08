@@ -1,0 +1,162 @@
+[
+  {
+    "file": "sequential-final-t65537.json",
+    "estimator_revision": "53da5982597709ba0fdf94ea37a84d822310fd84",
+    "cost_model": "classical ADPS16 core-SVP",
+    "secret": "uniform ternary (one remaining unknown share)",
+    "error_sigma": 3.2,
+    "samples": "unlimited",
+    "modulus": "17910131584335243354884666293486061705862606772965618083838141676100659263378469511155862088886688808961",
+    "logN": 14,
+    "attack_bits": {
+      "usvp": 133.736,
+      "dual_hybrid": 133.44400000002614,
+      "classic_dual": 133.73600000000152
+    },
+    "minimum_bits": 133.44400000002614,
+    "target_bits": 128,
+    "passes": true,
+    "parameter_file": "parameters/aligned-final/sequential-final-t65537.json",
+    "parameter_sha256": "75cc5949bab5a54eb3e528d02be6bc2d5113f63ef9cd39a65a7ccaea60b00cc8"
+  },
+  {
+    "file": "sequential-final-t786433.json",
+    "estimator_revision": "53da5982597709ba0fdf94ea37a84d822310fd84",
+    "cost_model": "classical ADPS16 core-SVP",
+    "secret": "uniform ternary (one remaining unknown share)",
+    "error_sigma": 3.2,
+    "samples": "unlimited",
+    "modulus": "3121732900919643779816817237158583218332561757676576497968163673084518454098137368738916536253881902414245560192198830434137758200044831689146369",
+    "logN": 15,
+    "attack_bits": {
+      "usvp": 218.416,
+      "dual_hybrid": 217.83200000000113,
+      "classic_dual": 218.708
+    },
+    "minimum_bits": 217.83200000000113,
+    "target_bits": 128,
+    "passes": true,
+    "parameter_file": "parameters/aligned-final/sequential-final-t786433.json",
+    "parameter_sha256": "0e8beb36811147d2c4921b90838c3527866e662a2675c5e2be59ead0dd6208b0"
+  },
+  {
+    "file": "sequential-none-t65537.json",
+    "estimator_revision": "53da5982597709ba0fdf94ea37a84d822310fd84",
+    "cost_model": "classical ADPS16 core-SVP",
+    "secret": "uniform ternary (one remaining unknown share)",
+    "error_sigma": 3.2,
+    "samples": "unlimited",
+    "modulus": "390215426472306870489622311564930823680244080117425993159023984064016351339715258795969542840227369121511089444769423699831260445638757254627329",
+    "logN": 15,
+    "attack_bits": {
+      "usvp": 220.16799999999998,
+      "dual_hybrid": 219.87599999999998,
+      "classic_dual": 220.45999999999998
+    },
+    "minimum_bits": 219.87599999999998,
+    "target_bits": 128,
+    "passes": true,
+    "parameter_file": "parameters/aligned-final/sequential-none-t65537.json",
+    "parameter_sha256": "38141562a4b97ba5693989637ac8592483c1a3c63726265e8532fab0b633b64b"
+  },
+  {
+    "file": "sequential-none-t786433.json",
+    "estimator_revision": "53da5982597709ba0fdf94ea37a84d822310fd84",
+    "cost_model": "classical ADPS16 core-SVP",
+    "secret": "uniform ternary (one remaining unknown share)",
+    "error_sigma": 3.2,
+    "samples": "unlimited",
+    "modulus": "7198258330726590745398727168266441403596129546971695631858425814135476909538325129931767283383541948885880350768647354284092781003515096959727822795786946377482241",
+    "logN": 15,
+    "attack_bits": {
+      "usvp": 185.712,
+      "dual_hybrid": 185.42,
+      "classic_dual": 185.712
+    },
+    "minimum_bits": 185.42,
+    "target_bits": 128,
+    "passes": true,
+    "parameter_file": "parameters/aligned-final/sequential-none-t786433.json",
+    "parameter_sha256": "adebdb759cb9415fcdee0042366e822989e05ed1afe196369694bfa98968d04f"
+  },
+  {
+    "file": "tree-final-t65537.json",
+    "estimator_revision": "53da5982597709ba0fdf94ea37a84d822310fd84",
+    "cost_model": "classical ADPS16 core-SVP",
+    "secret": "uniform ternary (one remaining unknown share)",
+    "error_sigma": 3.2,
+    "samples": "unlimited",
+    "modulus": "17910131584335243354884666293486061705862606772965618083838141676100659263378469511155862088886688808961",
+    "logN": 14,
+    "attack_bits": {
+      "usvp": 133.736,
+      "dual_hybrid": 133.44400000002614,
+      "classic_dual": 133.73600000000152
+    },
+    "minimum_bits": 133.44400000002614,
+    "target_bits": 128,
+    "passes": true,
+    "parameter_file": "parameters/aligned-final/tree-final-t65537.json",
+    "parameter_sha256": "3eac76309ec8a00628f6a922e483bfdbf7f85aa42bdf906b3664eb9bc4532dc7"
+  },
+  {
+    "file": "tree-final-t786433.json",
+    "estimator_revision": "53da5982597709ba0fdf94ea37a84d822310fd84",
+    "cost_model": "classical ADPS16 core-SVP",
+    "secret": "uniform ternary (one remaining unknown share)",
+    "error_sigma": 3.2,
+    "samples": "unlimited",
+    "modulus": "3121732900919643779816817237158583218332561757676576497968163673084518454098137368738916536253881902414245560192198830434137758200044831689146369",
+    "logN": 15,
+    "attack_bits": {
+      "usvp": 218.416,
+      "dual_hybrid": 217.83200000000113,
+      "classic_dual": 218.708
+    },
+    "minimum_bits": 217.83200000000113,
+    "target_bits": 128,
+    "passes": true,
+    "parameter_file": "parameters/aligned-final/tree-final-t786433.json",
+    "parameter_sha256": "a0f9774cd52b6812a82147b1ccac9b986ac56117de2df419fa9d6a03045b1b8f"
+  },
+  {
+    "file": "tree-none-t65537.json",
+    "estimator_revision": "53da5982597709ba0fdf94ea37a84d822310fd84",
+    "cost_model": "classical ADPS16 core-SVP",
+    "secret": "uniform ternary (one remaining unknown share)",
+    "error_sigma": 3.2,
+    "samples": "unlimited",
+    "modulus": "90851202973641491076373732694754145093955339956667038759761241279708063569864262895389113877578696889760220293349504581182496241811457",
+    "logN": 15,
+    "attack_bits": {
+      "usvp": 241.77599999999998,
+      "dual_hybrid": 241.19199999999998,
+      "classic_dual": 242.06799999999998
+    },
+    "minimum_bits": 241.19199999999998,
+    "target_bits": 128,
+    "passes": true,
+    "parameter_file": "parameters/aligned-final/tree-none-t65537.json",
+    "parameter_sha256": "bb32ad13f82da85fc3969aeb62f5e23b61eb9e405a9db9d0b66b510373cc63e5"
+  },
+  {
+    "file": "tree-none-t786433.json",
+    "estimator_revision": "53da5982597709ba0fdf94ea37a84d822310fd84",
+    "cost_model": "classical ADPS16 core-SVP",
+    "secret": "uniform ternary (one remaining unknown share)",
+    "error_sigma": 3.2,
+    "samples": "unlimited",
+    "modulus": "6546776267901286971661479208347643327976270724513942052208842983151788284058505548028196408106876515710151903291882856382023652199042481901278068604929",
+    "logN": 15,
+    "attack_bits": {
+      "usvp": 206.152,
+      "dual_hybrid": 205.85999999999999,
+      "classic_dual": 206.444
+    },
+    "minimum_bits": 205.85999999999999,
+    "target_bits": 128,
+    "passes": true,
+    "parameter_file": "parameters/aligned-final/tree-none-t786433.json",
+    "parameter_sha256": "e5594a31b11c6a2280fe40ac10120b9b3e86ae4d1c3b8c4dc3bbc2895d187de2"
+  }
+]
