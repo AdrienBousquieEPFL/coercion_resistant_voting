@@ -153,7 +153,6 @@ func delegatedMaskedTallyPlain(D [][]uint64, wFlat, tFlat, q []uint64, n, b, k, 
 func delegatedMaskedTallyFromPeriodsPlain(
 	D [][]uint64,
 	candidatePeriods, delegationPeriods [][]int,
-	validity [][]uint64,
 	q []uint64,
 	n, b, k, T int,
 ) []uint64 {
@@ -161,25 +160,21 @@ func delegatedMaskedTallyFromPeriodsPlain(
 	assert(len(q) == n, "len(q) must be n")
 	assert(len(candidatePeriods) == T, "candidate periods must contain T rows")
 	assert(len(delegationPeriods) == T, "delegation periods must contain T rows")
-	assert(len(validity) == T, "validity must contain T rows")
 	for voter := range n {
 		assert(len(D[voter]) == k, "each D row must have k entries")
 	}
 	for period := range T {
 		assert(len(candidatePeriods[period]) == n, "each candidate period must contain n entries")
 		assert(len(delegationPeriods[period]) == n, "each delegation period must contain n entries")
-		assert(len(validity[period]) == n, "each validity period must contain n entries")
 	}
 
-	selectedChoice := func(periods [][]int, voter, width int, counts []uint64) int {
+	selectedChoice := func(periods, otherPeriods [][]int, voter, width int, counts []uint64) int {
 		clear(counts)
 		current := -1
 		for period := range T {
 			choice := periods[period][voter]
-			assert(choice >= -1 && choice < width, "periodic choice is outside its logical range")
-			bit := validity[period][voter]
-			assert(bit <= 1, "validity value must be boolean")
-			if choice >= 0 && bit == 1 {
+			assert(choice >= zeroSubmission && choice < width, "periodic choice is outside its logical range")
+			if submissionMask(choice, otherPeriods[period][voter]) == 1 {
 				current = choice
 			}
 			if current >= 0 {
@@ -200,7 +195,7 @@ func delegatedMaskedTallyFromPeriodsPlain(
 	delegateSupport := make([]uint64, k)
 	delegationCounts := make([]uint64, k)
 	for voter := range n {
-		if delegate := selectedChoice(delegationPeriods, voter, k, delegationCounts); delegate >= 0 {
+		if delegate := selectedChoice(delegationPeriods, candidatePeriods, voter, k, delegationCounts); delegate >= 0 {
 			delegateSupport[delegate] += q[voter]
 		}
 	}
@@ -208,13 +203,13 @@ func delegatedMaskedTallyFromPeriodsPlain(
 	out := make([]uint64, b)
 	candidateCounts := make([]uint64, b)
 	for voter := range n {
-		candidate := selectedChoice(candidatePeriods, voter, b, candidateCounts)
+		candidate := selectedChoice(candidatePeriods, delegationPeriods, voter, b, candidateCounts)
 		if candidate < 0 {
 			continue
 		}
 
 		weight := uint64(0)
-		if selectedChoice(delegationPeriods, voter, k, delegationCounts) < 0 {
+		if selectedChoice(delegationPeriods, candidatePeriods, voter, k, delegationCounts) < 0 {
 			weight = q[voter]
 		}
 		for delegate := range k {

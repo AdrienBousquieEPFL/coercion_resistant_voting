@@ -14,8 +14,7 @@ this document explains their scope and interpretation.
 ## Configurations
 
 All cases use `b=k=5`, `T=5`, `qmax=1`, three multiparty participants, and
-Lattigo v6.2.0. Candidate and delegation submissions have separate range masks
-and share a voter-period validity bit.
+Lattigo v6.2.0. Candidate and delegation votes share one encrypted voter-period mask. Inputs are added directly.
 
 | Voters `n` | Input execution | Strategies | Cases |
 |---:|---|---|---:|
@@ -93,7 +92,7 @@ The selected 600-bit chain is a conservative shared comparison profile, not a
 claim of the smallest possible modulus.
 
 The synthetic screen runs the actual downstream computation with compact,
-freshly encrypted validity-gated aggregates and amplified residual error to
+freshly encrypted payload/shared-mask aggregates and amplified residual error to
 model packing and accumulation. It is a stress model, not an independent fresh
 encryption for every target electorate submission. The diagnostic checks
 plaintext correctness and a 20-bit minimum margin at recorded checkpoints:
@@ -183,7 +182,7 @@ Each invocation creates a unique directory under `experiments/results/` with:
 - `measurements-summary.csv`: medians, minima, maxima, and sample counts for
   successful measured executions, generated after a successful campaign.
 
-New runs record `tally_flow=period-streaming-midpoint-tree-v1`. Phases 4.1 and
+New runs record `tally_flow=period-streaming-shared-mask-v2`. Phases 4.1 and
 4.2 alternate across periods, and final refresh contributes another 4.2 row.
 The summary sums repeated phase timings within each run before computing
 statistics across measured runs. The existing phase instrumentation forces GC
@@ -200,7 +199,7 @@ python3 experiments/scripts/summarize.py experiments/results/<campaign-directory
 ```
 
 Use `server_observed_wall_ms:<scope>` for accumulator initialization plus
-server validity gating/aggregation and downstream phases with multiparty time
+server aggregation and downstream phases with multiparty time
 removed. Use `tally_observed_wall_ms:<scope>` for the same computation **including
 all refresh calls**, and `tally_refresh_wall_ms` for refresh alone. Here scope is
 `one_input_period` or `five_input_periods`; benchmark initialization and downstream
@@ -237,10 +236,10 @@ V = 2 * floor((R/2)/w)    voters per ciphertext
 C = ceil(n/V)            ciphertext blocks per grid period
 ```
 
-The parameter table records these values. The active period has four packed
-accumulators: candidate inputs, candidate range masks, delegation inputs, and
-delegation range masks. Together they contain `4*C` ciphertexts. A fresh set
-is initialized for each period, so `4*T*C` ciphertexts are still created over
+The table generator records these values. The active period has three packed
+accumulators: candidate inputs, delegation inputs, and a shared mask. Together
+they contain `3*C` ciphertexts. A fresh set is initialized for each period,
+so `3*T*C` ciphertexts are created over
 the full run, but they are not all retained simultaneously.
 
 At period close, sequential echo updates its current effective choices and
@@ -253,8 +252,8 @@ calculation. Final refresh and sequential intermediate-refresh boundaries are
 unchanged. Input additions remain sequential.
 
 For `n=500000`, `b=k=5`, and the selected no-refresh profile, `V=6552` and
-`C=77`. The active period's four accumulators contain 308 degree-one
-ciphertexts: approximately **1.61 GB (1.50 GiB) of polynomial coefficients**.
+`C=77`. The active period's three accumulators contain 231 degree-one
+ciphertexts: approximately **1.21 GB (1.13 GiB) of polynomial coefficients**.
 The table separates active period accumulators from total allocations across
 periods. This is not peak process memory: echo state, evaluation keys, encrypted
 weights, temporaries, and garbage collection require more memory. In particular,
@@ -274,3 +273,13 @@ measured memory feasibility, deployment refresh-noise analysis, and complete
 serialized communication accounting. Packing-boundary experiments and broader
 parameter searches may help choose faster or smaller profiles later. They are
 not additional configurations silently included in the current 22-case matrix.
+
+## Shared-mask protocol revision
+
+Current runs use `tally_flow=period-streaming-shared-mask-v2`. Each submission
+adds two payload ciphertexts and one shared mask; each period retains three
+aggregate grids. Commitments remain outside the implementation. The parameter
+files are unchanged. Existing results, validation reports, and the checked-in
+parameter table are historical and do not establish performance or noise
+margins for this revised flow. The table generator and synthetic screen use the
+new flow; older screen evidence is labeled historical when generating tables.

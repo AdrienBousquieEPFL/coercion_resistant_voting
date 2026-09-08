@@ -23,7 +23,7 @@ def main():
                 meta=Path(row['run_directory'])/'meta.json'
                 row['tally_flow']=json.loads(meta.read_text()).get('tally_flow','pre-streaming') if meta.exists() else 'unknown'
                 screens.setdefault(row['family'],[]).append(row)
-    fields=['experiment_id','parameter_file','logN','logQ_bits','logP_bits','plaintext_modulus','Q_primes','P_primes','lattice_security_bits','voters_per_ciphertext','ciphertexts','refresh_boundaries','refresh_ciphertexts','ingestion_periods_measured','input_validity_gates_measured_max','active_period_accumulator_ciphertexts','active_period_accumulator_coefficient_gib','total_period_accumulator_ciphertexts_created','synthetic_trials','synthetic_min_margin_bits','synthetic_status']
+    fields=['experiment_id','parameter_file','logN','logQ_bits','logP_bits','plaintext_modulus','Q_primes','P_primes','lattice_security_bits','voters_per_ciphertext','ciphertexts','refresh_boundaries','refresh_ciphertexts','ingestion_periods_measured','input_additions_measured_max','active_period_accumulator_ciphertexts','active_period_accumulator_coefficient_gib','total_period_accumulator_ciphertexts_created','synthetic_trials','synthetic_min_margin_bits','synthetic_status']
     with (ROOT/'parameter-table.csv').open('w',newline='') as f:
         writer=csv.DictWriter(f,fieldnames=fields,lineterminator="\n");writer.writeheader()
         for row in rows:
@@ -39,9 +39,9 @@ def main():
             status='not-screened'
             if evidence:
                 flows={s['tally_flow'] for s in evidence}
-                provenance='streaming' if flows=={'period-streaming-midpoint-tree-v1'} else 'pre-streaming' if flows=={'pre-streaming'} else 'mixed-or-unknown-flow'
+                provenance='shared-mask-v2' if flows=={'period-streaming-shared-mask-v2'} else 'historical-flow'
                 status=f'passed-{provenance}-synthetic-screen' if all(s['status']=='passed' for s in evidence) else 'failed-synthetic-screen'
-            writer.writerow(dict(experiment_id=row['experiment_id'],parameter_file=row['parameter_file'],logN=p['logN'],logQ_bits=sum(math.log2(int(q)) for q in p['Q']),logP_bits=sum(math.log2(int(q)) for q in p['P']),plaintext_modulus=p['plaintext_modulus'],Q_primes=len(p['Q']),P_primes=len(p['P']),lattice_security_bits=security[file.name]['minimum_bits'],voters_per_ciphertext=V,ciphertexts=C,refresh_boundaries=refresh_boundaries,refresh_ciphertexts=refresh_ct,ingestion_periods_measured=periods,input_validity_gates_measured_max=4*n*periods,active_period_accumulator_ciphertexts=4*C,active_period_accumulator_coefficient_gib=4*C*2*ring_degree*len(p['Q'])*8/2**30,total_period_accumulator_ciphertexts_created=4*T*C,synthetic_trials=len(evidence),synthetic_min_margin_bits=min(margins) if margins else '',synthetic_status=status))
+            writer.writerow(dict(experiment_id=row['experiment_id'],parameter_file=row['parameter_file'],logN=p['logN'],logQ_bits=sum(math.log2(int(q)) for q in p['Q']),logP_bits=sum(math.log2(int(q)) for q in p['P']),plaintext_modulus=p['plaintext_modulus'],Q_primes=len(p['Q']),P_primes=len(p['P']),lattice_security_bits=security[file.name]['minimum_bits'],voters_per_ciphertext=V,ciphertexts=C,refresh_boundaries=refresh_boundaries,refresh_ciphertexts=refresh_ct,ingestion_periods_measured=periods,input_additions_measured_max=3*n*periods,active_period_accumulator_ciphertexts=3*C,active_period_accumulator_coefficient_gib=3*C*2*ring_degree*len(p['Q'])*8/2**30,total_period_accumulator_ciphertexts_created=3*T*C,synthetic_trials=len(evidence),synthetic_min_margin_bits=min(margins) if margins else '',synthetic_status=status))
     print(f'Wrote {ROOT/"parameter-table.csv"}')
 
 if __name__=='__main__':main()

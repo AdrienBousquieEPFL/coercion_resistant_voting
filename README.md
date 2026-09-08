@@ -12,22 +12,28 @@ This Go program simulates the encrypted voting tally with Lattigo and BGV. It:
 The program currently supports:
 
 - encrypted voter weights;
-- one incoming encrypted validity bit per voter-period submission, shared by
-  the candidate and delegation inputs;
-- encrypted candidate and delegation range masks;
+- encrypted candidate and delegation votes;
+- one encrypted mask per submission, shared by both vote types;
 - periodic echo updates for missing submissions;
 - tree-based and sequential echo calculations;
 - collective refresh to reduce ciphertext noise;
 - an optional no-refresh mode for parameter experiments;
 - majority selection, delegation, weighted voting, and packed aggregation.
 
-The protocol has voters commit to their validity bits during registration. This
-program simulates those registered bits and encrypts them under the collective
-public key. The tally uses each shared bit to gate both the candidate and
-delegation payloads and their range masks. Invalid inputs have no effect, so the
-echo calculation keeps the previous valid state. The program consumes each
-validity ciphertext as its submission is aggregated instead of retaining all
-validity ciphertexts in memory.
+The protocol assumes voters commit to pre-encrypted ciphertexts for all voting
+possibilities and their corresponding masks. That commitment mechanism is
+outside this implementation. The simulation freshly encrypts the selected
+inputs under the collective public key, then adds them directly to the period
+tally. There are no validity-bit inputs or validity-gating multiplications.
+
+Each submission contains candidate votes, delegate votes, and a single mask
+covering the full `max(b,k)` voter block. A real submission has a mask of ones
+in that block and replaces both states together; a zero component clears its
+previous state. A coerced submission has zero payloads and a zero mask, so echo
+preserves both previous states. The plaintext simulator uses `-1` for a zero
+component (two `-1`s mean no submission) and a pair of `-2`s to send an explicit
+all-zero submission. Both kinds of submitted ballots use three ciphertexts.
+These sentinels are simulation data, not flags received by the tally server.
 
 ## Setup
 
@@ -72,9 +78,9 @@ You can change these parameters:
 
 ### Echo strategies
 
-Both modes collect one period at a time into four encrypted-zero accumulators
-(candidate payload/mask and delegation payload/mask). Submissions are validity
-gated and added on arrival. At period close, echo consumes those accumulators
+Both modes collect one period at a time into three encrypted-zero accumulators
+(candidate payload, delegation payload, and shared mask). Submissions are
+added on arrival. At period close, echo consumes those accumulators
 before the next period is initialized. No array of all periods' ciphertexts is
 retained; the simulation still prepares plaintext schedules in advance.
 
@@ -112,7 +118,7 @@ go run . --echo-mode=sequential --echo-refresh-interval=2
 
 In collective refresh mode, both echo strategies refresh the final echo totals
 before majority selection. Both strategies use the same encrypted inputs,
-encrypted range masks, plaintext checks, and remaining tally steps.
+the shared encrypted mask, plaintext checks, and remaining tally steps.
 
 ### No-refresh experiments
 
@@ -162,8 +168,8 @@ go run . benchmark --n=500000 --sample-voters=1000 --progress=false
 ```
 
 It measures one period of combined candidate/delegation submissions for the
-requested sample size, then extrapolates validity-gating and aggregation time
-to `n*T`. It initializes the four full-layout accumulators one period at a
+requested sample size, then extrapolates aggregation time
+to `n*T`. It initializes the three full-layout accumulators one period at a
 time and closes each through echo. Only the first period ingests fixtures;
 the remaining periods contribute encrypted-zero inputs and masks. The complete
 echo and downstream tally still cover all `T` periods. Fixture preparation is outside the aggregation sample.
@@ -192,7 +198,7 @@ memory spikes. Run each measured configuration in a fresh process.
 
 `components.csv` separates the streamed-input phase into lightweight timing
 totals for encrypted-zero aggregate initialization, simulated client
-encoding/encryption, and server-side validity gating/aggregation. These
+encoding/encryption, and server-side aggregation. These
 component timers do not force garbage collection or create phase boundaries in
 the per-voter loop. They are non-overlapping parts of Phase 4.1 and must not be
 added to the full phase time again. Their sum can be slightly smaller than the
@@ -215,7 +221,7 @@ The campaign summary reports both server-only computation and a tally time
 that includes refresh:
 
 - `server_observed_wall_ms:<scope>`: accumulator initialization plus server
-  validity gating/aggregation plus phases 4.2–4.7 minus their multiparty time.
+  aggregation plus phases 4.2–4.7 minus their multiparty time.
 - `tally_refresh_wall_ms`: all intermediate and final collective refresh calls.
 - `tally_observed_wall_ms:<scope>`: the server metric plus refresh time.
 
@@ -239,11 +245,11 @@ approximately which phase caused the memory peak. A shorter interval such as
 but compared runs should use the same interval.
 
 `meta.json` records the echo mode, refresh mode, and refresh interval. The
-streamed-input phase separately counts simulated validity encryption,
-validity-gating multiplications, and payload/range-mask encryption. The
-validity-ciphertext row in `objects.csv` estimates total input traffic; those
-ciphertexts are not all live at the same time. Echo and refresh operations are
-also counted.
+streamed-input phase counts payload/shared-mask encryption and additions. The
+`input_ciphertexts_received` row in `objects.csv` estimates total input traffic
+for all three ciphertexts per submission, including all-zero submissions;
+these ciphertexts are not all live at once. Benchmark samples use the separate
+`sampled_input_ciphertexts` row. Echo and refresh operations are also counted.
 
 Each run creates new random inputs. A single run is useful for checking that the
 program works, but it is not a fair performance comparison with earlier runs.
@@ -259,7 +265,7 @@ gofmt -w *.go
 go test ./...
 ```
 
-The deterministic unit tests cover shared validity behavior, invalid-input
+The deterministic unit tests cover shared-mask replacement, all-zero-submission
 echo, balanced-versus-sequential echo results, and the first packing boundary
 that requires more than one ciphertext.
 
@@ -281,9 +287,14 @@ experiments; it enables all plaintext checks and must not be used for timing
 or with reused benchmark fixtures. `--describe-parameters` prints a concrete
 profile without generating keys or running the tally.
 
-Period streaming is identified by `tally_flow=period-streaming-midpoint-tree-v1`
+Period streaming is identified by `tally_flow=period-streaming-shared-mask-v2`
 in run metadata. Phases 4.1 and 4.2 repeat for successive periods (with an
 additional 4.2 interval for final refresh when enabled). Sum repeated phase
 rows within a run; the campaign summary does this before calculating medians
 across runs. Phase instrumentation performs its usual GC at each boundary,
 so timing results should not be pooled with the older batch implementation.
+
+Earlier results and the checked-in parameter table describe the previous
+validity-gated flow and are retained as historical evidence. Regenerate cost
+tables and rerun experiments before comparing performance with this revision;
+FHE parameter files have not been retuned by this change.

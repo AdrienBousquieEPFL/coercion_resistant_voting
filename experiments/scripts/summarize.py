@@ -36,7 +36,7 @@ for run in runs:
                     else: multiparty_tally_wall+=float(row['multiparty_wall_ms'])
                 if label=='component' and name=='4.1-aggregate-initialization':
                     initialization_wall=float(row['wall_ms'])
-                if label=='component' and name=='4.1-server-validity-gating-and-aggregation':
+                if label=='component' and name in ('4.1-server-aggregation','4.1-server-validity-gating-and-aggregation'):
                     ingestion_wall=float(row['wall_ms'])
                 if label=='component' and 'estimated' in name:
                     projected_ingestion_wall=float(row['wall_ms'])

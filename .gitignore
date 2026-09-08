@@ -6,6 +6,7 @@
 /analysis/
 /experiments/REDESIGN_VALIDATION.md
 /experiments/STREAMING_FLOW_VALIDATION.md
+SHARED_MASK_UPDATE.md
 
 # Python caches
 __pycache__/

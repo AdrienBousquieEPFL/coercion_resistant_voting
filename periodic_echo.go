@@ -91,7 +91,7 @@ func (s *periodicEchoState) add(left, right *rlwe.Ciphertext) *rlwe.Ciphertext {
 	return must1(s.evaluator.AddNew(left, right))
 }
 
-// ClosePeriod consumes one packed period's gated payload and mask. No input
+// ClosePeriod consumes one packed period's payload and shared block mask. No input
 // ciphertext may be mutated by the caller afterward: tree leaves can own them.
 func (s *periodicEchoState) ClosePeriod(inputs, masks []*rlwe.Ciphertext, logicalRanges [][]uint64) {
 	assert(s.received < s.periods, "too many echo periods")

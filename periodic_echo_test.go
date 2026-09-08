@@ -49,9 +49,8 @@ func TestPeriodStreamingEncryptedEcho(t *testing.T) {
 	layout := computePackingLayout(n, b, 2, params.MaxSlots()/2)
 	choices := [][]int{{0, 1, -1, 199, 0}, {1, -1, -1, 0, 1}, {-1, 2, -1, -1, 2}, {2, -1, -1, 1, -1}, {-1, 0, -1, -1, 0}}
 	delegation := [][]int{{1, -1, -1, 0, 2}, {-1, 0, -1, 1, 0}, {2, -1, -1, -1, 1}, {-1, 1, -1, 2, -1}, {0, -1, -1, -1, 2}}
-	validity := registrationValidityBits(T, n)
-	validity[1][0] = 0
-	validity[3][3] = 0
+	choices[1][0], delegation[1][0] = zeroSubmission, zeroSubmission
+	choices[3][3], delegation[3][3] = zeroSubmission, zeroSubmission
 	logical := func(width int) [][]uint64 {
 		out := make([][]uint64, layout.ciphertextCount)
 		for i := range out {
@@ -106,26 +105,35 @@ func TestPeriodStreamingEncryptedEcho(t *testing.T) {
 		}
 		states = append(states, pair{newState(), newState(), count, wantRefreshes})
 	}
+	ingressEvaluator := bgv.NewEvaluator(params, nil, true)
 	for p := range T {
-		a := streamAndAggregatePeriodInputs(params, encoder, encryptor, evaluator, layout, b, b, k, n, T, p, choices, delegation, validity, 0, nil)
-		cp, cm := gatedPeriodPlain(choices[p], validity[p], n, b)
-		dp, dm := gatedPeriodPlain(delegation[p], validity[p], n, k)
+		a := streamAndAggregatePeriodInputs(params, encoder, encryptor, ingressEvaluator, layout, b, b, k, n, T, p, choices, delegation, 0, nil)
+		cp, cm := periodPlain(choices[p], delegation[p], n, b)
+		dp, _ := periodPlain(delegation[p], choices[p], n, k)
+		expectedInputs := 0
+		for voter := range n {
+			if choices[p][voter] != noSubmission || delegation[p][voter] != noSubmission {
+				expectedInputs += 3
+			}
+		}
+		if a.inputCiphertextCount != expectedInputs {
+			t.Fatalf("period %d got %d ciphertexts want %d", p, a.inputCiphertextCount, expectedInputs)
+		}
 		check(a.candidateInputs, cp, b)
-		check(a.candidateRangeMasks, cm, b)
+		check(a.sharedMasks, cm, b)
 		check(a.delegationInputs, dp, k)
-		check(a.delegationRangeMasks, dm, k)
 		for _, state := range states {
-			state.c.ClosePeriod(a.candidateInputs, a.candidateRangeMasks, logical(b))
-			state.d.ClosePeriod(a.delegationInputs, a.delegationRangeMasks, logical(k))
+			state.c.ClosePeriod(a.candidateInputs, a.sharedMasks, logical(b))
+			state.d.ClosePeriod(a.delegationInputs, a.sharedMasks, logical(b))
 			if state.c.mode == "sequential" {
-				check(state.c.totals, periodicEchoTotalsPlain(choices[:p+1], validity[:p+1], n, b), b)
-				check(state.d.totals, periodicEchoTotalsPlain(delegation[:p+1], validity[:p+1], n, k), k)
+				check(state.c.totals, periodicEchoTotalsPlain(choices[:p+1], delegation[:p+1], n, b), b)
+				check(state.d.totals, periodicEchoTotalsPlain(delegation[:p+1], choices[:p+1], n, k), k)
 			}
 		}
 	}
 	for _, state := range states {
-		check(state.c.Totals(), periodicEchoTotalsPlain(choices, validity, n, b), b)
-		check(state.d.Totals(), periodicEchoTotalsPlain(delegation, validity, n, k), k)
+		check(state.c.Totals(), periodicEchoTotalsPlain(choices, delegation, n, b), b)
+		check(state.d.Totals(), periodicEchoTotalsPlain(delegation, choices, n, k), k)
 		expected := state.wantRefreshes
 		if *state.refreshes != expected {
 			t.Fatalf("refresh calls: got %d want %d", *state.refreshes, expected)
@@ -135,16 +143,16 @@ func TestPeriodStreamingEncryptedEcho(t *testing.T) {
 	fixture := prepareBenchmarkInputCiphertexts(params, encoder, encryptor)
 	state := newPeriodicEchoState(T, layout.ciphertextCount, "tree", evaluator, nil, nil)
 	for p := range T {
-		a := streamAndAggregatePeriodInputs(params, encoder, encryptor, evaluator, layout, b, b, k, n, T, p, nil, nil, nil, n, fixture)
+		a := streamAndAggregatePeriodInputs(params, encoder, encryptor, ingressEvaluator, layout, b, b, k, n, T, p, nil, nil, n, fixture)
 		expected := 0
 		if p == 0 {
-			expected = n
+			expected = 3 * n
 		}
-		if a.validityCiphertextCount != expected {
-			t.Fatalf("benchmark period %d processed %d validity inputs", p, a.validityCiphertextCount)
+		if a.inputCiphertextCount != expected {
+			t.Fatalf("benchmark period %d processed %d input ciphertexts", p, a.inputCiphertextCount)
 		}
 		check(a.candidateInputs, make([]uint64, n*b), b)
-		state.ClosePeriod(a.candidateInputs, a.candidateRangeMasks, logical(b))
+		state.ClosePeriod(a.candidateInputs, a.sharedMasks, logical(b))
 	}
 	check(state.Totals(), make([]uint64, n*b), b)
 }

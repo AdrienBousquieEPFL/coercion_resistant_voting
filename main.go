@@ -100,7 +100,7 @@ func main() {
 	//v := []uint64{2, 7, 1, 8, 7, 2, 8, 1, 6, 3, 2, 7, 3, 6, 1, 8, 6, 3, 5, 4}
 
 	InitMetrics(runMeta{
-		TallyFlow:            "period-streaming-midpoint-tree-v1",
+		TallyFlow:            "period-streaming-shared-mask-v2",
 		OutputRoot:           *outputRootFlag,
 		ParameterProfile:     selectedProfile,
 		WorkloadSeed:         *workloadSeedFlag,
@@ -137,20 +137,13 @@ func main() {
 	D := randomDelegationMatrix(n, k) // delegation matrix of size n x k, where D[i][j] is the delegate index for voter i and delegate j
 
 	var candidatePeriods, delegationPeriods [][]int
-	var validity [][]uint64
 	if !benchmarkMode {
 		// Retain explicit period schedules so the encrypted tally and plaintext
 		// reference can both model periods with no new submission. The initial
 		// count vectors are only simulation seeds for generating those schedules.
 		candidatePeriods = periodicChoicesFromCounts(randomVotingVector(n, b, T), n, b, T)
 		delegationPeriods = periodicChoicesFromCounts(randomDelegationVector(n, k, T), n, k, T)
-		ensureEchoCarryEvent(candidatePeriods)
-		ensureEchoCarryEvent(delegationPeriods)
-		validity = registrationValidityBits(T, n)
-		addValidityGatingScenario(candidatePeriods, validity, b)
-		addValidityGatingScenario(delegationPeriods, validity, k)
-		verifyValidityGatingScenario(candidatePeriods, validity, b)
-		verifyValidityGatingScenario(delegationPeriods, validity, k)
+		addZeroSubmissionScenario(candidatePeriods, delegationPeriods, b, k)
 	}
 
 	// Full plaintext echo vectors are needed only by the intermediate diagnostic
@@ -158,8 +151,8 @@ func main() {
 	// reference matrices live alongside the encrypted tally.
 	var v, d []uint64
 	if runIntermediateChecks {
-		v = periodicEchoTotalsPlain(candidatePeriods, validity, n, b)
-		d = periodicEchoTotalsPlain(delegationPeriods, validity, n, k)
+		v = periodicEchoTotalsPlain(candidatePeriods, delegationPeriods, n, b)
+		d = periodicEchoTotalsPlain(delegationPeriods, candidatePeriods, n, k)
 	}
 	q := randomVotingPower(n, qMax) // per-voter voting power q_i, one entry per voter
 	// fmt.Println("D=", D)
@@ -168,9 +161,8 @@ func main() {
 	// fmt.Println("q=", q)
 	RecordSized("D_matrix", n, int64(k)*8, "n rows of k uint64 (one-hot)")
 	if !benchmarkMode {
-		RecordSized("delegation_periods", T, int64(n)*8, "period-major choice indices; -1 means no submission")
-		RecordSized("candidate_periods", T, int64(n)*8, "period-major choice indices; -1 means no submission")
-		RecordSized("registration_validity", T, int64(n)*8, "one simulated private validity bit per voter-period, shared by candidate and delegation inputs")
+		RecordSized("delegation_periods", T, int64(n)*8, "period-major choices; -1 zero component/absence, paired -2 all-zero submission")
+		RecordSized("candidate_periods", T, int64(n)*8, "period-major choices; -1 zero component/absence, paired -2 all-zero submission")
 	}
 	if runIntermediateChecks {
 		RecordSized("d_vector", 1, int64(n)*int64(k)*8, "flat n*k uint64 after plaintext echo simulation")
@@ -363,24 +355,19 @@ func main() {
 		phFixtures := StartPhase("3.1-benchmark-input-fixture-preparation")
 		benchmarkInputs = prepareBenchmarkInputCiphertexts(params, encoder, encryptor)
 		phFixtures.Stop()
-		RecordCiphertexts("benchmarkInputFixtures", []*rlwe.Ciphertext{benchmarkInputs.validity, benchmarkInputs.input})
+		RecordCiphertexts("benchmarkInputFixtures", []*rlwe.Ciphertext{benchmarkInputs.input})
 	}
 
 	// 4. Consume one period at a time, closing it through echo before the next.
-	candidateLogicalRanges := make([][]uint64, layout.ciphertextCount)
-	delegationLogicalRanges := make([][]uint64, layout.ciphertextCount)
+	sharedLogicalRanges := make([][]uint64, layout.ciphertextCount)
 	for ctIdx := range layout.ciphertextCount {
-		candidateLogicalRanges[ctIdx] = make([]uint64, params.MaxSlots())
-		delegationLogicalRanges[ctIdx] = make([]uint64, params.MaxSlots())
+		sharedLogicalRanges[ctIdx] = make([]uint64, params.MaxSlots())
 		votersInCt := min(layout.votersPerCiphertext, n-ctIdx*layout.votersPerCiphertext)
 		for localVoterIdx := range votersInCt {
 			blockStart := (localVoterIdx / layout.votersPerRow) * layout.colsPerCiphertext
 			blockStart += (localVoterIdx % layout.votersPerRow) * blockSize
-			for offset := 0; offset < b; offset++ {
-				candidateLogicalRanges[ctIdx][blockStart+offset] = 1
-			}
-			for offset := 0; offset < k; offset++ {
-				delegationLogicalRanges[ctIdx][blockStart+offset] = 1
+			for offset := 0; offset < blockSize; offset++ {
+				sharedLogicalRanges[ctIdx][blockStart+offset] = 1
 			}
 		}
 	}
@@ -395,10 +382,10 @@ func main() {
 	candidateEcho, delegationEcho := newEcho(), newEcho()
 	var inputAccounting encryptedPeriodAggregates
 	for period := range T {
-		phEncrypt := StartPhase("4.1-streamed-input-reception-and-validity-gating")
+		phEncrypt := StartPhase("4.1-streamed-input-reception-and-aggregation")
 		periodAggregates := streamAndAggregatePeriodInputs(
 			params, encoder, encryptor, evaluator, layout, blockSize, b, k,
-			n, T, period, candidatePeriods, delegationPeriods, validity, benchmarkSampleVoters, benchmarkInputs,
+			n, T, period, candidatePeriods, delegationPeriods, benchmarkSampleVoters, benchmarkInputs,
 		)
 		phEncrypt.Stop()
 		inputAccounting.aggregateInitWall += periodAggregates.aggregateInitWall
@@ -407,26 +394,25 @@ func main() {
 		inputAccounting.clientPreparationCPU += periodAggregates.clientPreparationCPU
 		inputAccounting.serverIngestionWall += periodAggregates.serverIngestionWall
 		inputAccounting.serverIngestionCPU += periodAggregates.serverIngestionCPU
-		inputAccounting.validityCiphertextCount += periodAggregates.validityCiphertextCount
-		if periodAggregates.validityCiphertextBytes != 0 {
-			inputAccounting.validityCiphertextBytes = periodAggregates.validityCiphertextBytes
+		inputAccounting.inputCiphertextCount += periodAggregates.inputCiphertextCount
+		if periodAggregates.inputCiphertextBytes != 0 {
+			inputAccounting.inputCiphertextBytes = periodAggregates.inputCiphertextBytes
 		}
 
 		RecordCiphertexts(fmt.Sprintf("candidatePeriodInputs/p%d", period), periodAggregates.candidateInputs)
-		RecordCiphertexts(fmt.Sprintf("candidateRangeMaskCiphertexts/p%d", period), periodAggregates.candidateRangeMasks)
+		RecordCiphertexts(fmt.Sprintf("sharedMaskCiphertexts/p%d", period), periodAggregates.sharedMasks)
 		RecordCiphertexts(fmt.Sprintf("delegationPeriodInputs/p%d", period), periodAggregates.delegationInputs)
-		RecordCiphertexts(fmt.Sprintf("delegationRangeMaskCiphertexts/p%d", period), periodAggregates.delegationRangeMasks)
 		if runIntermediateChecks {
-			candidatePayloadPlain, candidateMaskPlain := gatedPeriodPlain(candidatePeriods[period], validity[period], n, b)
-			delegationPayloadPlain, delegationMaskPlain := gatedPeriodPlain(delegationPeriods[period], validity[period], n, k)
-			mp_verifyPackedCiphertexts(fmt.Sprintf("candidate gated payload period %d", period), encoder, params, layout, blockSize, b, candidatePayloadPlain, periodAggregates.candidateInputs, &cks, P)
-			mp_verifyPackedCiphertexts(fmt.Sprintf("candidate gated range mask period %d", period), encoder, params, layout, blockSize, b, candidateMaskPlain, periodAggregates.candidateRangeMasks, &cks, P)
-			mp_verifyPackedCiphertexts(fmt.Sprintf("delegation gated payload period %d", period), encoder, params, layout, blockSize, k, delegationPayloadPlain, periodAggregates.delegationInputs, &cks, P)
-			mp_verifyPackedCiphertexts(fmt.Sprintf("delegation gated range mask period %d", period), encoder, params, layout, blockSize, k, delegationMaskPlain, periodAggregates.delegationRangeMasks, &cks, P)
+			candidatePayloadPlain, _ := periodPlain(candidatePeriods[period], delegationPeriods[period], n, b)
+			delegationPayloadPlain, _ := periodPlain(delegationPeriods[period], candidatePeriods[period], n, k)
+			_, sharedMaskPlain := periodPlain(candidatePeriods[period], delegationPeriods[period], n, blockSize)
+			mp_verifyPackedCiphertexts(fmt.Sprintf("candidate payload period %d", period), encoder, params, layout, blockSize, b, candidatePayloadPlain, periodAggregates.candidateInputs, &cks, P)
+			mp_verifyPackedCiphertexts(fmt.Sprintf("delegation payload period %d", period), encoder, params, layout, blockSize, k, delegationPayloadPlain, periodAggregates.delegationInputs, &cks, P)
+			mp_verifyPackedCiphertexts(fmt.Sprintf("shared mask period %d", period), encoder, params, layout, blockSize, blockSize, sharedMaskPlain, periodAggregates.sharedMasks, &cks, P)
 		}
 		phEcho := StartPhase(fmt.Sprintf("4.2-tally-periodic-echo-%s", echoMode))
-		candidateEcho.ClosePeriod(periodAggregates.candidateInputs, periodAggregates.candidateRangeMasks, candidateLogicalRanges)
-		delegationEcho.ClosePeriod(periodAggregates.delegationInputs, periodAggregates.delegationRangeMasks, delegationLogicalRanges)
+		candidateEcho.ClosePeriod(periodAggregates.candidateInputs, periodAggregates.sharedMasks, sharedLogicalRanges)
+		delegationEcho.ClosePeriod(periodAggregates.delegationInputs, periodAggregates.sharedMasks, sharedLogicalRanges)
 		// No period grids are retained by main. Echo owns only its running state
 		// or completed tree segments; the next iteration creates fresh zeros.
 		periodAggregates = encryptedPeriodAggregates{}
@@ -444,16 +430,16 @@ func main() {
 		"4.1-simulated-client-input-preparation",
 		inputAccounting.clientPreparationWall,
 		inputAccounting.clientPreparationCPU,
-		fmt.Sprintf("execution-mode=%s; encoding and encryption of incoming validity, payload, and range-mask ciphertexts; excluded from server ingestion time", map[bool]string{false: "fresh", true: "sampled-server-benchmark"}[benchmarkMode]),
+		fmt.Sprintf("execution-mode=%s; encoding and encryption of incoming candidate, delegation, and shared-mask ciphertexts; excluded from server ingestion time", map[bool]string{false: "fresh", true: "sampled-server-benchmark"}[benchmarkMode]),
 	)
 	RecordComponentTiming(
-		"4.1-server-validity-gating-and-aggregation",
+		"4.1-server-aggregation",
 		inputAccounting.serverIngestionWall,
 		inputAccounting.serverIngestionCPU,
-		"ciphertext validity gates and additions into period aggregates; contains no input encoding or encryption",
+		"ciphertext additions into period aggregates; contains no input encoding or encryption",
 	)
 	fmt.Printf(
-		"Input reception components: aggregate initialization=%s, simulated client preparation=%s, server gating/aggregation=%s\n",
+		"Input reception components: aggregate initialization=%s, simulated client preparation=%s, server aggregation=%s\n",
 		inputAccounting.aggregateInitWall,
 		inputAccounting.clientPreparationWall,
 		inputAccounting.serverIngestionWall,
@@ -461,25 +447,25 @@ func main() {
 	if benchmarkMode {
 		estimatedAggregation := time.Duration(float64(inputAccounting.serverIngestionWall) * float64(n*T) / float64(benchmarkSampleVoters))
 		RecordComponentTiming(
-			"4.1-estimated-full-server-validity-gating-and-aggregation",
+			"4.1-estimated-full-server-aggregation",
 			estimatedAggregation,
 			time.Duration(float64(inputAccounting.serverIngestionCPU)*float64(n*T)/float64(benchmarkSampleVoters)),
 			fmt.Sprintf("extrapolated from %d combined voter-period samples to n*T=%d; estimate, not directly measured", benchmarkSampleVoters, n*T),
 		)
-		fmt.Printf("Estimated full server gating/aggregation for n*T=%d: %s\n", n*T, estimatedAggregation)
+		fmt.Printf("Estimated full server aggregation for n*T=%d: %s\n", n*T, estimatedAggregation)
 	}
 	if benchmarkMode {
 		RecordSized(
-			"sampled_validity_ciphertexts",
-			inputAccounting.validityCiphertextCount,
-			inputAccounting.validityCiphertextBytes,
+			"sampled_input_ciphertexts",
+			inputAccounting.inputCiphertextCount,
+			inputAccounting.inputCiphertextBytes,
 			"benchmark sample count only; not a communication estimate",
 		)
 	} else {
 		RecordSized(
-			"validity_ciphertexts_received",
-			inputAccounting.validityCiphertextCount,
-			inputAccounting.validityCiphertextBytes,
+			"input_ciphertexts_received",
+			inputAccounting.inputCiphertextCount,
+			inputAccounting.inputCiphertextBytes,
 			"serialized input traffic estimate; ciphertexts are consumed one at a time and are not retained",
 		)
 	}
@@ -756,11 +742,11 @@ func main() {
 		expectedFinal = delegatedMaskedTallyPlain(D, d, v, q, n, b, k, T)
 	} else {
 		if benchmarkMode {
-			// Benchmark payload and range-mask fixtures encrypt zero.
+			// Benchmark payload and shared-mask fixtures encrypt zero.
 			expectedFinal = make([]uint64, b)
 		} else {
 			expectedFinal = delegatedMaskedTallyFromPeriodsPlain(
-				D, candidatePeriods, delegationPeriods, validity, q, n, b, k, T,
+				D, candidatePeriods, delegationPeriods, q, n, b, k, T,
 			)
 		}
 	}

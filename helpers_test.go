@@ -5,40 +5,31 @@ import (
 	"testing"
 )
 
-func TestRegistrationValidityBitsAreSharedByVoterPeriod(t *testing.T) {
-	validity := registrationValidityBits(3, 2)
-	if len(validity) != 3 {
-		t.Fatalf("period count: got %d, want 3", len(validity))
+func TestSharedMaskEchoSemantics(t *testing.T) {
+	// Initial choice, coerced zero, absence, real replacement, then candidate-only
+	// submission: the last shared mask clears the old delegate choice.
+	c := [][]int{{0}, {zeroSubmission}, {noSubmission}, {2}, {1}}
+	d := [][]int{{1}, {zeroSubmission}, {noSubmission}, {0}, {noSubmission}}
+	if got, want := periodicEchoTotalsPlain(c, d, 1, 3), []uint64{3, 1, 1}; !slices.Equal(got, want) {
+		t.Fatalf("candidate echo: got %v want %v", got, want)
 	}
-	for period := range validity {
-		if !slices.Equal(validity[period], []uint64{1, 1}) {
-			t.Fatalf("period %d validity: got %v, want [1 1]", period, validity[period])
-		}
-	}
-
-	// One voter-period bit is consumed by both independent plaintext
-	// references, mirroring reuse of one ciphertext by both encrypted paths.
-	validity[1][0] = 0
-	candidate := [][]int{{0, -1}, {1, -1}, {2, -1}}
-	delegation := [][]int{{1, -1}, {0, -1}, {2, -1}}
-	if got, want := periodicEchoTotalsPlain(candidate, validity, 2, 3), []uint64{2, 0, 1, 0, 0, 0}; !slices.Equal(got, want) {
-		t.Fatalf("candidate echo: got %v, want %v", got, want)
-	}
-	if got, want := periodicEchoTotalsPlain(delegation, validity, 2, 3), []uint64{0, 2, 1, 0, 0, 0}; !slices.Equal(got, want) {
-		t.Fatalf("delegation echo: got %v, want %v", got, want)
+	if got, want := periodicEchoTotalsPlain(d, c, 1, 2), []uint64{1, 3}; !slices.Equal(got, want) {
+		t.Fatalf("delegate echo: got %v want %v", got, want)
 	}
 }
 
-func TestSharedValidityAllowsOneAbsentComponent(t *testing.T) {
-	validity := []uint64{1}
-	candidatePayload, candidateMask := gatedPeriodPlain([]int{-1}, validity, 1, 3)
-	delegationPayload, delegationMask := gatedPeriodPlain([]int{1}, validity, 1, 2)
-
-	if !slices.Equal(candidatePayload, []uint64{0, 0, 0}) || !slices.Equal(candidateMask, []uint64{0, 0, 0}) {
-		t.Fatalf("absent candidate component must remain zero: payload=%v mask=%v", candidatePayload, candidateMask)
+func TestSharedMaskWithZeroComponent(t *testing.T) {
+	cp, cm := periodPlain([]int{noSubmission}, []int{1}, 1, 3)
+	dp, dm := periodPlain([]int{1}, []int{noSubmission}, 1, 2)
+	if !slices.Equal(cp, []uint64{0, 0, 0}) || !slices.Equal(cm, []uint64{1, 1, 1}) ||
+		!slices.Equal(dp, []uint64{0, 1}) || !slices.Equal(dm, []uint64{1, 1}) {
+		t.Fatalf("wrong shared-mask submission: %v %v %v %v", cp, cm, dp, dm)
 	}
-	if !slices.Equal(delegationPayload, []uint64{0, 1}) || !slices.Equal(delegationMask, []uint64{1, 1}) {
-		t.Fatalf("present delegation component was not gated correctly: payload=%v mask=%v", delegationPayload, delegationMask)
+	for _, choice := range []int{noSubmission, zeroSubmission} {
+		payload, mask := periodPlain([]int{choice}, []int{choice}, 1, 3)
+		if !slices.Equal(payload, []uint64{0, 0, 0}) || !slices.Equal(mask, []uint64{0, 0, 0}) {
+			t.Fatalf("zero input changed state: %v %v", payload, mask)
+		}
 	}
 }
 
@@ -55,14 +46,14 @@ func composePlainEcho(left, right plainEchoSegment) plainEchoSegment {
 	}
 }
 
-func periodicEchoTotalsPlainTree(choices [][]int, validity [][]uint64, voterCount, width int) []uint64 {
+func periodicEchoTotalsPlainTree(choices, otherChoices [][]int, voterCount, width int) []uint64 {
 	out := make([]uint64, voterCount*width)
 	for voter := range voterCount {
 		for slot := range width {
 			segments := make([]plainEchoSegment, len(choices))
 			for period := range choices {
 				x, z := 0, 0
-				if choices[period][voter] >= 0 && validity[period][voter] == 1 {
+				if submissionMask(choices[period][voter], otherChoices[period][voter]) == 1 {
 					z = 1
 					if choices[period][voter] == slot {
 						x = 1
@@ -85,15 +76,10 @@ func TestBalancedAndSequentialEchoAgree(t *testing.T) {
 		{2, 0},
 		{1, 2},
 	}
-	validity := [][]uint64{
-		{1, 1},
-		{0, 1}, // invalid replacement for voter zero; voter one is absent
-		{1, 1},
-		{1, 0}, // invalid replacement for voter one
-		{1, 1},
-	}
-	sequential := periodicEchoTotalsPlain(choices, validity, 2, 3)
-	balanced := periodicEchoTotalsPlainTree(choices, validity, 2, 3)
+	other := [][]int{{1, -1}, {zeroSubmission, -1}, {-1, 2}, {0, zeroSubmission}, {2, 1}}
+	choices[1][0], choices[3][1] = zeroSubmission, zeroSubmission
+	sequential := periodicEchoTotalsPlain(choices, other, 2, 3)
+	balanced := periodicEchoTotalsPlainTree(choices, other, 2, 3)
 	if !slices.Equal(balanced, sequential) {
 		t.Fatalf("balanced echo %v differs from sequential echo %v", balanced, sequential)
 	}
@@ -125,20 +111,16 @@ func TestStreamingFinalReferenceMatchesMaterializedReference(t *testing.T) {
 		{1, -1, 0},
 		{-1, 1, 0},
 	}
-	validity := [][]uint64{
-		{1, 1, 1},
-		{0, 1, 1},
-		{1, 0, 1},
-		{1, 1, 0},
-		{1, 1, 1},
-	}
+	candidatePeriods[1][0], delegationPeriods[1][0] = zeroSubmission, zeroSubmission
+	candidatePeriods[2][1], delegationPeriods[2][1] = zeroSubmission, zeroSubmission
+	candidatePeriods[3][2], delegationPeriods[3][2] = zeroSubmission, zeroSubmission
 	q := []uint64{1, 3, 2}
 
-	v := periodicEchoTotalsPlain(candidatePeriods, validity, n, b)
-	d := periodicEchoTotalsPlain(delegationPeriods, validity, n, k)
+	v := periodicEchoTotalsPlain(candidatePeriods, delegationPeriods, n, b)
+	d := periodicEchoTotalsPlain(delegationPeriods, candidatePeriods, n, k)
 	want := delegatedMaskedTallyPlain(D, d, v, q, n, b, k, T)
 	got := delegatedMaskedTallyFromPeriodsPlain(
-		D, candidatePeriods, delegationPeriods, validity, q, n, b, k, T,
+		D, candidatePeriods, delegationPeriods, q, n, b, k, T,
 	)
 	if !slices.Equal(got, want) {
 		t.Fatalf("streaming final reference: got %v, want %v", got, want)

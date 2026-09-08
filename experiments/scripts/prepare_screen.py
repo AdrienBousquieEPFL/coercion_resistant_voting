@@ -2,7 +2,7 @@
 """Copy the current source and add a compact, explicitly synthetic noise screen.
 
 This executes the actual echo and downstream tally. Ingress is replaced with
-fresh validity-gated packed aggregates and amplified residual error. It is not
+fresh packed payload/shared-mask aggregates and amplified residual error. It is not
 an independent-encryption full-electorate test or a runtime benchmark.
 """
 import argparse
@@ -22,7 +22,7 @@ for source in list(project.glob('*.go'))+[project/'go.mod',project/'go.sum']:
     manifest[source.name]=hashlib.sha256(data).hexdigest()
 p=out/'main.go';s=p.read_text()
 s=s.replace('periodAggregates := streamAndAggregatePeriodInputs(', 'periodAggregates := screenAndAggregatePeriodInputs(')
-s=s.replace('ensureEchoCarryEvent(candidatePeriods)','screenWorkload(candidatePeriods,delegationPeriods,b,k)\n\t\tensureEchoCarryEvent(candidatePeriods)')
+s=s.replace('addZeroSubmissionScenario(candidatePeriods, delegationPeriods, b, k)', 'screenWorkload(candidatePeriods,delegationPeriods,b,k)\n\t\taddZeroSubmissionScenario(candidatePeriods, delegationPeriods, b, k)')
 s=s.replace('phSupport.Stop()', 'screenAmplifyResidual(ctDelegateSupport, screenCiphertextCount(layout))\n\tphSupport.Stop()')
 s=s.replace('ctResultRows := ctAcc.CopyNew()', 'screenAmplifyResidual(ctAcc, screenCiphertextCount(layout))\n\tctResultRows := ctAcc.CopyNew()')
 p.write_text(s)

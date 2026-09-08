@@ -39,18 +39,14 @@ func screenAmplifyResidual(ct *rlwe.Ciphertext,factor int) {
  ringQ.Add(ct.Value[0],decoded.Value,ct.Value[0])
 }
 
-func screenAndAggregatePeriodInputs(params bgv.Parameters,encoder *bgv.Encoder,encryptor *rlwe.Encryptor,evaluator *bgv.Evaluator,layout packingLayout,blockSize,candidateWidth,delegationWidth,voterCount,periodCount,period int,candidatePeriods,delegationPeriods [][]int,validity [][]uint64,benchmarkSampleVoters int,benchmarkInputs *benchmarkInputCiphertexts) encryptedPeriodAggregates {
+func screenAndAggregatePeriodInputs(params bgv.Parameters,encoder *bgv.Encoder,encryptor *rlwe.Encryptor,evaluator *bgv.Evaluator,layout packingLayout,blockSize,candidateWidth,delegationWidth,voterCount,periodCount,period int,candidatePeriods,delegationPeriods [][]int,benchmarkSampleVoters int,benchmarkInputs *benchmarkInputCiphertexts) encryptedPeriodAggregates {
  assert(benchmarkSampleVoters==0,"noise screening cannot use reused benchmark fixtures")
  assert(*screenTarget>=voterCount,"screen target cannot be smaller than probe")
  rec.meta.ExecutionMode="synthetic-noise-screen"
  fmt.Printf("[screen] target_n=%d probe_n=%d target_ciphertexts=%d workload=%s; synthetic residual amplification\n",*screenTarget,voterCount,screenCiphertextCount(layout),*screenPattern)
  out:=encryptedPeriodAggregates{}
  newGrid:=func()[]*rlwe.Ciphertext { return make([]*rlwe.Ciphertext,layout.ciphertextCount) }
- out.candidateInputs,out.candidateRangeMasks=newGrid(),newGrid()
- out.delegationInputs,out.delegationRangeMasks=newGrid(),newGrid()
- ones:=make([]uint64,params.MaxSlots());for i:=range ones {ones[i]=1}
- ptValidity:=bgv.NewPlaintext(params,params.MaxLevel());ptValidity.Scale=validityInputScale(params)
- must(encoder.Encode(ones,ptValidity))
+ out.candidateInputs,out.delegationInputs,out.sharedMasks=newGrid(),newGrid(),newGrid()
  fill:=func(dst []*rlwe.Ciphertext,plain []uint64,width int) {
   for ctIdx:=range dst {
    slots:=make([]uint64,params.MaxSlots())
@@ -60,9 +56,7 @@ func screenAndAggregatePeriodInputs(params bgv.Parameters,encoder *bgv.Encoder,e
     copy(slots[base:base+width],plain[voter*width:(voter+1)*width])
    }
    pt:=bgv.NewPlaintext(params,params.MaxLevel());must(encoder.Encode(slots,pt))
-   input:=must1(encryptor.EncryptNew(pt))
-   valid:=must1(encryptor.EncryptNew(ptValidity))
-   dst[ctIdx]=must1(evaluator.MulRelinNew(valid,input))
+   dst[ctIdx]=must1(encryptor.EncryptNew(pt))
    // One dense aggregate, pessimistically amplified by every possible voter
    // contribution in its block. This is not independent-sample simulation.
    screenAmplifyResidual(dst[ctIdx],layout.votersPerCiphertext)
@@ -70,10 +64,12 @@ func screenAndAggregatePeriodInputs(params bgv.Parameters,encoder *bgv.Encoder,e
  }
  p:=period
  {
-  cp,cm:=gatedPeriodPlain(candidatePeriods[p],validity[p],voterCount,candidateWidth)
-  dp,dm:=gatedPeriodPlain(delegationPeriods[p],validity[p],voterCount,delegationWidth)
-  fill(out.candidateInputs,cp,candidateWidth);fill(out.candidateRangeMasks,cm,candidateWidth)
-  fill(out.delegationInputs,dp,delegationWidth);fill(out.delegationRangeMasks,dm,delegationWidth)
+  cp,_:=periodPlain(candidatePeriods[p],delegationPeriods[p],voterCount,candidateWidth)
+  dp,_:=periodPlain(delegationPeriods[p],candidatePeriods[p],voterCount,delegationWidth)
+  _,mask:=periodPlain(candidatePeriods[p],delegationPeriods[p],voterCount,blockSize)
+  fill(out.candidateInputs,cp,candidateWidth)
+  fill(out.delegationInputs,dp,delegationWidth)
+  fill(out.sharedMasks,mask,blockSize)
  }
  return out
 }

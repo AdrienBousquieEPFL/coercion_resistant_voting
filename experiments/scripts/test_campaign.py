@@ -21,7 +21,7 @@ peak=1000 if 'warmup' in seed else 10+int(seed.rsplit('-',1)[-1])
 with (run/'phases.csv').open('w') as f:
  w=csv.writer(f);w.writerow(['phase','wall_ms','cpu_ms','multiparty_wall_ms','multiparty_cpu_ms']);w.writerow(['4.2-tally-periodic-echo-tree',2,1,0.5,0.25]);w.writerow(['4.2-tally-periodic-echo-tree',4,2,1.5,0.75])
 with (run/'components.csv').open('w') as f:
- w=csv.writer(f);w.writerow(['component','wall_ms','cpu_ms','notes']);w.writerow(['4.1-server-validity-gating-and-aggregation',3,2,'measured']);w.writerow(['4.1-aggregate-initialization',5,4,'server']);w.writerow(['multiparty:refresh',2,1,'protocol']);w.writerow(['multiparty:threshold-decryption',7,6,'outside tally'])
+ w=csv.writer(f);w.writerow(['component','wall_ms','cpu_ms','notes']);w.writerow(['4.1-server-aggregation',3,2,'measured']);w.writerow(['4.1-aggregate-initialization',5,4,'server']);w.writerow(['multiparty:refresh',2,1,'protocol']);w.writerow(['multiparty:threshold-decryption',7,6,'outside tally'])
 print(f'[metrics] run_id=fake output={run}')
 print('ASSERT PASSED: final tally')
 '''
