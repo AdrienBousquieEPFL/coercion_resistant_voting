@@ -1,0 +1,8 @@
+{
+  "run_id": "20260909_123816_n100000_b5_k5_T5_3463099304",
+  "elapsed_ms": 267096,
+  "process_peak_rss_mib": 14668,
+  "sampled_peak_rss_mib": 14598.95703125,
+  "sampled_heap_peak_mib": 15223.575256347656,
+  "sample_interval_ms": 1000
+}

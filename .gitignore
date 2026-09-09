@@ -1,12 +1,28 @@
 # Local experiment outputs and binaries
 /runs/
 /bin/
-/experiments/results/
 /experiments/validation/
 /analysis/
 /experiments/REDESIGN_VALIDATION.md
 /experiments/STREAMING_FLOW_VALIDATION.md
 SHARED_MASK_UPDATE.md
+
+
+# Ignore experiment outputs except selected analysis data.
+/experiments/results/**
+!/experiments/results/**/
+
+!/experiments/results/*/campaign.json
+!/experiments/results/*/executions.csv
+!/experiments/results/*/measurements-summary.csv
+
+!/experiments/results/*/raw/*/meta.json
+!/experiments/results/*/raw/*/summary.json
+!/experiments/results/*/raw/*/phases.csv
+!/experiments/results/*/raw/*/components.csv
+!/experiments/results/*/raw/*/ops.csv
+!/experiments/results/*/raw/*/objects.csv
+
 
 # Python caches
 __pycache__/

@@ -1,0 +1,48 @@
+{
+  "tally_flow": "period-streaming-shared-mask-v2",
+  "parameter_profile": "tree-none-t786433",
+  "parameter_id": "0233dda46fdb69b1070f3ef6b7c87c2caacd964311fdf302a0e4d7f6c140eef2",
+  "workload_seed": "v1-n500000-b5-k5-warmup-0",
+  "encryption_randomness": "fresh-unseeded",
+  "noise_checks": false,
+  "run_id": "20260909_143105_n500000_b5_k5_T5_3762346984",
+  "started_at": "2026-09-09T14:31:05+02:00",
+  "n": 500000,
+  "b": 5,
+  "k": 5,
+  "T": 5,
+  "echo_mode": "tree",
+  "refresh_mode": "none",
+  "echo_refresh_interval": 0,
+  "diagnostic_checks": "final",
+  "execution_mode": "sampled-server-benchmark",
+  "benchmark_sample_voters": 500000,
+  "metrics_sample_interval_ms": 1000,
+  "bgv": {
+    "logN": 15,
+    "Q": [
+      36028797017456641,
+      36028797014704129,
+      36028797014573057,
+      36028797014376449,
+      36028797013327873,
+      36028797013000193,
+      36028797012606977,
+      36028769822048257
+    ],
+    "P": [
+      2305843009211662337
+    ],
+    "logQ_bits": 440,
+    "logP_bits": 61,
+    "logQP_bits": 501,
+    "q_limbs": 8,
+    "plaintext_modulus": 786433,
+    "secret_dist": "Ternary(p=0.6667)",
+    "error_dist": "DiscreteGaussian(sigma=3.2, bound=19.2)"
+  },
+  "git_sha": "2cf2c5147dc3a0d169b31a4cd4aba9766f2b456b",
+  "hostname": "lovelace",
+  "go_version": "go1.26.1",
+  "num_cpu": 96
+}

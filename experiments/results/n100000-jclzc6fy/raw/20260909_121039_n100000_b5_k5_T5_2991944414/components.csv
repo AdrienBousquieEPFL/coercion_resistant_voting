@@ -1,0 +1,4 @@
+component,wall_ms,cpu_ms,notes
+multiparty:public-key-generation,38.663,38.871,"whole local multiparty protocol, including party and coordinator work; no network latency; overlaps containing phases"
+multiparty:relinearization-key-generation,802.321,845.835,"whole local multiparty protocol, including party and coordinator work; no network latency; overlaps containing phases"
+multiparty:galois-key-generation,14234.693,14566.071,"whole local multiparty protocol, including party and coordinator work; no network latency; overlaps containing phases"
