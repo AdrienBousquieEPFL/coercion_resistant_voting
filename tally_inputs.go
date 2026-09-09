@@ -24,26 +24,24 @@ type encryptedPeriodAggregates struct {
 	serverIngestionCPU    time.Duration
 }
 
-// benchmarkInputCiphertexts contains a benchmark-only encrypted-zero fixture.
-// All three incoming ciphertexts use the ordinary BGV input scale.
-type benchmarkInputCiphertexts struct {
-	input *rlwe.Ciphertext
-}
-
-func prepareBenchmarkInputCiphertexts(params bgv.Parameters, encoder *bgv.Encoder, encryptor *rlwe.Encryptor) *benchmarkInputCiphertexts {
-	zeroSlots := make([]uint64, params.MaxSlots())
-	ptInput := bgv.NewPlaintext(params, params.MaxLevel())
-	CountOp("EncodeInputFixture")
-	must(encoder.Encode(zeroSlots, ptInput))
-	CountOp("EncryptInputFixture")
-	input := must1(encryptor.EncryptNew(ptInput))
-
-	return &benchmarkInputCiphertexts{input: input}
+// restrictBenchmarkSubmissions leaves real sampled submissions in period zero.
+// Later periods have no submissions, so echo carries the accepted first choices.
+func restrictBenchmarkSubmissions(candidate, delegation [][]int, samples int) {
+	assert(len(candidate) > 0 && len(candidate) == len(delegation), "benchmark schedules must match")
+	assert(samples > 0 && samples <= len(candidate[0]), "invalid benchmark sample")
+	for p := range candidate {
+		assert(len(candidate[p]) == len(candidate[0]) && len(delegation[p]) == len(candidate[p]), "benchmark voter counts must match")
+		for v := range candidate[p] {
+			if p > 0 || v >= samples {
+				candidate[p][v], delegation[p][v] = noSubmission, noSubmission
+			}
+		}
+	}
 }
 
 // streamAndAggregatePeriodInputs receives and aggregates one period only.
 // The caller consumes the returned accumulators through echo before calling
-// again for the next period. Benchmark mode ingests fixtures only in period 0.
+// again for the next period. Benchmark mode ingests fresh sampled submissions only in period 0.
 // Each simulated submission sends candidate and delegation payloads plus one
 // mask over the entire voter block. The server only adds these ciphertexts.
 // Commitments and pre-encryption are outside this prototype; fresh encryption
@@ -58,18 +56,14 @@ func streamAndAggregatePeriodInputs(
 	voterCount, periodCount, period int,
 	candidatePeriods, delegationPeriods [][]int,
 	benchmarkSampleVoters int,
-	benchmarkInputs *benchmarkInputCiphertexts,
 ) encryptedPeriodAggregates {
 	assert(periodCount > 0, "period count must be > 0")
 	assert(period >= 0 && period < periodCount, "period index out of range")
 	assert(voterCount > 0, "voter count must be > 0")
 	benchmarkMode := benchmarkSampleVoters > 0
-	assert(!benchmarkMode || benchmarkInputs != nil, "sampled benchmark requires prepared input fixtures")
 	assert(!benchmarkMode || benchmarkSampleVoters <= voterCount, "benchmark sample must not exceed voter count")
-	if !benchmarkMode {
-		assert(len(candidatePeriods) == periodCount, "candidate periods must match period count")
-		assert(len(delegationPeriods) == periodCount, "delegation periods must match period count")
-	}
+	assert(len(candidatePeriods) == periodCount, "candidate periods must match period count")
+	assert(len(delegationPeriods) == periodCount, "delegation periods must match period count")
 
 	initWallStart := time.Now()
 	initCPUStart := cpuTime()
@@ -104,32 +98,26 @@ func streamAndAggregatePeriodInputs(
 		if period == 0 {
 			votersToProcess = benchmarkSampleVoters
 		}
-	} else {
-		assert(len(candidatePeriods[period]) == voterCount, "candidate period must contain one entry per voter")
-		assert(len(delegationPeriods[period]) == voterCount, "delegation period must contain one entry per voter")
 	}
+	assert(len(candidatePeriods[period]) == voterCount, "candidate period must contain one entry per voter")
+	assert(len(delegationPeriods[period]) == voterCount, "delegation period must contain one entry per voter")
 	submissions := 0
 	for voter := range votersToProcess {
-		if benchmarkMode || candidatePeriods[period][voter] != noSubmission || delegationPeriods[period][voter] != noSubmission {
+		if candidatePeriods[period][voter] != noSubmission || delegationPeriods[period][voter] != noSubmission {
 			submissions++
 		}
 	}
 	progress := NewProgress("4.1-streamed-input-reception-and-aggregation", int64(3*submissions))
 
 	encryptAndAccumulate := func(dst []*rlwe.Ciphertext, ctIdx int, slots []uint64) {
-		var inputCt *rlwe.Ciphertext
-		if benchmarkMode {
-			inputCt = benchmarkInputs.input
-		} else {
-			clientWallStart := time.Now()
-			clientCPUStart := cpuTime()
-			CountOp("Encode")
-			must(encoder.Encode(slots, ptInput))
-			CountOp("EncryptNew")
-			inputCt = must1(encryptor.EncryptNew(ptInput))
-			out.clientPreparationWall += time.Since(clientWallStart)
-			out.clientPreparationCPU += cpuTime() - clientCPUStart
-		}
+		clientWallStart := time.Now()
+		clientCPUStart := cpuTime()
+		CountOp("Encode")
+		must(encoder.Encode(slots, ptInput))
+		CountOp("EncryptNew")
+		inputCt := must1(encryptor.EncryptNew(ptInput))
+		out.clientPreparationWall += time.Since(clientWallStart)
+		out.clientPreparationCPU += cpuTime() - clientCPUStart
 
 		serverWallStart := time.Now()
 		serverCPUStart := cpuTime()
@@ -143,10 +131,7 @@ func streamAndAggregatePeriodInputs(
 	}
 
 	for voter := range votersToProcess {
-		candidateChoice, delegationChoice := 0, 0
-		if !benchmarkMode {
-			candidateChoice, delegationChoice = candidatePeriods[period][voter], delegationPeriods[period][voter]
-		}
+		candidateChoice, delegationChoice := candidatePeriods[period][voter], delegationPeriods[period][voter]
 		assert(candidateChoice >= zeroSubmission && candidateChoice < candidateWidth, "candidate choice is outside its logical range")
 		assert(delegationChoice >= zeroSubmission && delegationChoice < delegationWidth, "delegation choice is outside its logical range")
 		mask := submissionMask(candidateChoice, delegationChoice)

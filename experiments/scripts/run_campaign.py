@@ -2,6 +2,7 @@
 """Execute one voter-count slice, with separate warm-ups and fresh processes."""
 import argparse
 import csv
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -9,11 +10,22 @@ from pathlib import Path
 import re
 import signal
 import subprocess
-import tempfile
 import time
 
 ROOT=Path(__file__).resolve().parents[1]
 PROJECT=ROOT.parent
+
+def create_campaign_directory(root, n):
+    """Create a timestamped v2 campaign without reusing an existing directory."""
+    name=f'n{n}-v2-{datetime.now(timezone.utc):%Y%m%d_%H%M%SZ}'
+    suffix=1
+    while True:
+        directory=root/(name if suffix==1 else f'{name}-{suffix}')
+        try:
+            directory.mkdir()
+            return directory
+        except FileExistsError:
+            suffix+=1
 
 def selected_rows(n, strategies=(), shapes=()):
     with (ROOT/'experiments.csv').open() as f:
@@ -62,7 +74,7 @@ def main():
         return
     if not binary.is_file(): parser.error(f'build the executable first with scripts/build.sh; missing {binary}')
     args.output_root.mkdir(parents=True,exist_ok=True)
-    campaign=Path(tempfile.mkdtemp(prefix=f'n{args.n}-',dir=args.output_root.resolve()))
+    campaign=create_campaign_directory(args.output_root.resolve(),args.n)
     (campaign/'logs').mkdir()
     manifest=dict(n=args.n,warmups=args.warmups,repeats=args.repeats,timeout_seconds=args.timeout,binary=str(binary),binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),encryption_randomness='fresh-unseeded',configurations=rows)
     (campaign/'campaign.json').write_text(json.dumps(manifest,indent=2)+'\n')

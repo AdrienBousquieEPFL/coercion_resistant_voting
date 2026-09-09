@@ -65,11 +65,7 @@ func main() {
 	if *noiseCheckFlag {
 		diagnosticChecks = "all"
 	}
-	if benchmarkMode {
-		diagnosticChecks = "final"
-	}
 	metricsSampleInterval := *metricsSampleIntervalFlag
-	assert(!(*noiseCheckFlag && benchmarkMode), "reused benchmark fixtures cannot validate noise")
 	assert(*noiseMarginFlag >= 0, "noise margin threshold must be nonnegative")
 	assert(n > 0 && b > 0 && k > 0 && k < n && T > 0 && T%2 == 1 && N > 0, "invalid election dimensions")
 	setWorkloadSeed(*workloadSeedFlag)
@@ -114,7 +110,7 @@ func main() {
 		RefreshMode:          refreshMode,
 		EchoRefreshInterval:  echoRefreshInterval,
 		DiagnosticChecks:     diagnosticChecks,
-		ExecutionMode:        map[bool]string{false: "fresh", true: "sampled-server-benchmark"}[benchmarkMode],
+		ExecutionMode:        map[bool]string{false: "fresh", true: "sampled-fresh-input-benchmark"}[benchmarkMode],
 		BenchmarkSamples:     benchmarkSampleVoters,
 		MetricsSampleMS:      metricsSampleInterval.Milliseconds(),
 	})
@@ -136,13 +132,12 @@ func main() {
 	phInit := StartPhase("1-init-random-inputs")
 	D := randomDelegationMatrix(n, k) // delegation matrix of size n x k, where D[i][j] is the delegate index for voter i and delegate j
 
-	var candidatePeriods, delegationPeriods [][]int
-	if !benchmarkMode {
-		// Evaluation uses one nonzero one-hot choice per component and period.
-		// Zero-vote scenarios are outside this workload; the sampled benchmark
-		// retains its separate encrypted-zero fixtures.
-		candidatePeriods = periodicChoicesFromCounts(randomVotingVector(n, b, T), n, b, T)
-		delegationPeriods = periodicChoicesFromCounts(randomVotingVector(n, k, T), n, k, T)
+	// Prepare real one-hot inputs for both execution modes. In benchmark mode,
+	// only the sampled first-period submissions are received; later periods echo.
+	candidatePeriods := periodicChoicesFromCounts(randomVotingVector(n, b, T), n, b, T)
+	delegationPeriods := periodicChoicesFromCounts(randomVotingVector(n, k, T), n, k, T)
+	if benchmarkMode {
+		restrictBenchmarkSubmissions(candidatePeriods, delegationPeriods, benchmarkSampleVoters)
 	}
 
 	// Full plaintext echo vectors are needed only by the intermediate diagnostic
@@ -159,10 +154,8 @@ func main() {
 	// fmt.Println("v=", v)
 	// fmt.Println("q=", q)
 	RecordSized("D_matrix", n, int64(k)*8, "n rows of k uint64 (one-hot)")
-	if !benchmarkMode {
-		RecordSized("delegation_periods", T, int64(n)*8, "period-major choices; -1 zero component/absence, paired -2 all-zero submission")
-		RecordSized("candidate_periods", T, int64(n)*8, "period-major choices; -1 zero component/absence, paired -2 all-zero submission")
-	}
+	RecordSized("delegation_periods", T, int64(n)*8, "period-major choices; -1 zero component/absence, paired -2 all-zero submission")
+	RecordSized("candidate_periods", T, int64(n)*8, "period-major choices; -1 zero component/absence, paired -2 all-zero submission")
 	if runIntermediateChecks {
 		RecordSized("d_vector", 1, int64(n)*int64(k)*8, "flat n*k uint64 after plaintext echo simulation")
 		RecordSized("t_vector", 1, int64(n)*int64(b)*8, "flat n*b uint64 after plaintext echo simulation")
@@ -200,7 +193,7 @@ func main() {
 	fmt.Println("Total voting power sum(q) =", qSum)
 	fmt.Println("Echo mode =", echoMode, "refresh mode =", refreshMode, "sequential refresh interval =", echoRefreshInterval, "diagnostic checks =", diagnosticChecks)
 	if benchmarkMode {
-		fmt.Println("Execution mode = sampled server benchmark; aggregation samples =", benchmarkSampleVoters)
+		fmt.Println("Execution mode = fresh-input server benchmark; aggregation samples =", benchmarkSampleVoters)
 	} else {
 		fmt.Println("Execution mode = fresh")
 	}
@@ -347,16 +340,6 @@ func main() {
 		mp_verifyBaseSlotCiphertexts("encrypted q base projection", encoder, params, layout, blockSize, q, qBaseCiphertexts, &cks, P)
 	}
 
-	// The server benchmark prepares scale-compatible encrypted-zero operands
-	// outside the measured aggregation sample.
-	var benchmarkInputs *benchmarkInputCiphertexts
-	if benchmarkMode {
-		phFixtures := StartPhase("3.1-benchmark-input-fixture-preparation")
-		benchmarkInputs = prepareBenchmarkInputCiphertexts(params, encoder, encryptor)
-		phFixtures.Stop()
-		RecordCiphertexts("benchmarkInputFixtures", []*rlwe.Ciphertext{benchmarkInputs.input})
-	}
-
 	// 4. Consume one period at a time, closing it through echo before the next.
 	sharedLogicalRanges := make([][]uint64, layout.ciphertextCount)
 	for ctIdx := range layout.ciphertextCount {
@@ -384,7 +367,7 @@ func main() {
 		phEncrypt := StartPhase("4.1-streamed-input-reception-and-aggregation")
 		periodAggregates := streamAndAggregatePeriodInputs(
 			params, encoder, encryptor, evaluator, layout, blockSize, b, k,
-			n, T, period, candidatePeriods, delegationPeriods, benchmarkSampleVoters, benchmarkInputs,
+			n, T, period, candidatePeriods, delegationPeriods, benchmarkSampleVoters,
 		)
 		phEncrypt.Stop()
 		inputAccounting.aggregateInitWall += periodAggregates.aggregateInitWall
@@ -429,7 +412,7 @@ func main() {
 		"4.1-simulated-client-input-preparation",
 		inputAccounting.clientPreparationWall,
 		inputAccounting.clientPreparationCPU,
-		fmt.Sprintf("execution-mode=%s; encoding and encryption of incoming candidate, delegation, and shared-mask ciphertexts; excluded from server ingestion time", map[bool]string{false: "fresh", true: "sampled-server-benchmark"}[benchmarkMode]),
+		fmt.Sprintf("execution-mode=%s; encoding and encryption of incoming candidate, delegation, and shared-mask ciphertexts; excluded from server ingestion time", map[bool]string{false: "fresh", true: "sampled-fresh-input-benchmark"}[benchmarkMode]),
 	)
 	RecordComponentTiming(
 		"4.1-server-aggregation",
@@ -740,14 +723,9 @@ func main() {
 	if runIntermediateChecks {
 		expectedFinal = delegatedMaskedTallyPlain(D, d, v, q, n, b, k, T)
 	} else {
-		if benchmarkMode {
-			// Benchmark payload and shared-mask fixtures encrypt zero.
-			expectedFinal = make([]uint64, b)
-		} else {
-			expectedFinal = delegatedMaskedTallyFromPeriodsPlain(
-				D, candidatePeriods, delegationPeriods, q, n, b, k, T,
-			)
-		}
+		expectedFinal = delegatedMaskedTallyFromPeriodsPlain(
+			D, candidatePeriods, delegationPeriods, q, n, b, k, T,
+		)
 	}
 	verifyLeadingSlots("final tally", expectedFinal, decoded[:b])
 }

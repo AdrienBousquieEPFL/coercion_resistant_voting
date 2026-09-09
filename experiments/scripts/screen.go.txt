@@ -40,8 +40,8 @@ func screenAmplifyResidual(ct *rlwe.Ciphertext,factor int) {
  ringQ.Add(ct.Value[0],decoded.Value,ct.Value[0])
 }
 
-func screenAndAggregatePeriodInputs(params bgv.Parameters,encoder *bgv.Encoder,encryptor *rlwe.Encryptor,evaluator *bgv.Evaluator,layout packingLayout,blockSize,candidateWidth,delegationWidth,voterCount,periodCount,period int,candidatePeriods,delegationPeriods [][]int,benchmarkSampleVoters int,benchmarkInputs *benchmarkInputCiphertexts) encryptedPeriodAggregates {
- assert(benchmarkSampleVoters==0,"noise screening cannot use reused benchmark fixtures")
+func screenAndAggregatePeriodInputs(params bgv.Parameters,encoder *bgv.Encoder,encryptor *rlwe.Encryptor,evaluator *bgv.Evaluator,layout packingLayout,blockSize,candidateWidth,delegationWidth,voterCount,periodCount,period int,candidatePeriods,delegationPeriods [][]int,benchmarkSampleVoters int) encryptedPeriodAggregates {
+ assert(benchmarkSampleVoters==0,"synthetic noise screening requires the full-period schedule")
  assert(*screenTarget>=voterCount,"screen target cannot be smaller than probe")
  rec.meta.ExecutionMode="synthetic-noise-screen"
  fmt.Printf("[screen] target_n=%d probe_n=%d target_ciphertexts=%d workload=%s; synthetic residual amplification\n",*screenTarget,voterCount,screenCiphertextCount(layout),*screenPattern)

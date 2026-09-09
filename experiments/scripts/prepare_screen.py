@@ -22,7 +22,7 @@ for source in list(project.glob('*.go'))+[project/'go.mod',project/'go.sum']:
     manifest[source.name]=hashlib.sha256(data).hexdigest()
 p=out/'main.go';s=p.read_text()
 s=s.replace('periodAggregates := streamAndAggregatePeriodInputs(', 'periodAggregates := screenAndAggregatePeriodInputs(')
-workload_anchor='delegationPeriods = periodicChoicesFromCounts(randomVotingVector(n, k, T), n, k, T)'
+workload_anchor='delegationPeriods := periodicChoicesFromCounts(randomVotingVector(n, k, T), n, k, T)'
 assert s.count(workload_anchor)==1, 'evaluation workload anchor must occur exactly once'
 s=s.replace(workload_anchor, workload_anchor+'\n\t\tscreenWorkload(candidatePeriods,delegationPeriods,b,k)')
 s=s.replace('phSupport.Stop()', 'screenAmplifyResidual(ctDelegateSupport, screenCiphertextCount(layout))\n\tphSupport.Stop()')

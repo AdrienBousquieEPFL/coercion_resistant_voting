@@ -170,18 +170,25 @@ executing the repeated aggregation for every voter and period:
 go run . benchmark --n=500000 --sample-voters=1000 --progress=false
 ```
 
-It measures one period of combined candidate/delegation submissions for the
-requested sample size, then extrapolates aggregation time
-to `n*T`. It initializes the three full-layout accumulators one period at a
-time and closes each through echo. Only the first period ingests fixtures;
-the remaining periods contribute encrypted-zero inputs and masks. The complete
-echo and downstream tally still cover all `T` periods. Fixture preparation is outside the aggregation sample.
+It independently encodes and encrypts real candidate/delegation inputs and
+shared masks for the sampled voters in period zero. Client preparation is timed
+separately and excluded from the server aggregation sample. The measured
+aggregation time is projected to `n*T`; accumulator initialization and echo are
+executed for all T periods, followed by the complete downstream tally.
 
-The benchmark command automatically uses final-only diagnostics. Its zero
-fixtures and extrapolated aggregation are suitable for server runtime and
-target-layout memory experiments, but not for correctness, communication, or
-noise-budget conclusions. Use several sample sizes and repetitions to confirm
-that aggregation time scales linearly.
+Later periods receive no submissions: their encrypted-zero accumulators enter
+echo, which carries the accepted first-period choices. Unsampled voters have no
+submission in any period. Final correctness uses this actual schedule, not an
+all-zero expected result. The campaign uses `--sample-voters=n` and final-only
+diagnostics; explicit `--diagnostic-checks=all` or `--noise-check` can check the
+sampled workload, but cannot establish full-election noise correctness.
+
+New metadata uses `execution_mode=sampled-fresh-input-benchmark`. Older
+`sampled-server-benchmark` runs reused a zero fixture and are not directly
+comparable. Encryption now takes real process time and affects memory/cache/GC,
+even though its timer is excluded from server aggregation. Keep old results and
+figures as historical; rebuild before running new experiments. The projection
+assumes representative submissions and linear aggregation scaling.
 
 ## Results and instrumentation
 
@@ -287,7 +294,7 @@ Use `--parameter-file=<file>` for a concrete versioned profile,
 for uniquely named result directories. Keys and encryption remain freshly
 random. `--noise-check` is an opt-in, secret-assisted diagnostic for synthetic
 experiments; it enables all plaintext checks and must not be used for timing
-or with reused benchmark fixtures. `--describe-parameters` prints a concrete
+when reporting benchmark timings. `--describe-parameters` prints a concrete
 profile without generating keys or running the tally.
 
 Period streaming is identified by `tally_flow=period-streaming-shared-mask-v2`

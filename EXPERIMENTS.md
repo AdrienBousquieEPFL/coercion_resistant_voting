@@ -38,9 +38,10 @@ At `n>=10000`, the scripts use `benchmark --sample-voters=n`: the ingestion
 measurement processes all voters for one period. The downstream echo and tally
 still model all five periods, using one set of target-sized period accumulators
 at a time. This is
-not a one-period election. Benchmark mode reuses encrypted-zero input fixtures;
-it measures server throughput and is not evidence about independent-encryption
-noise at the full electorate size. Any five-period ingestion projection is
+not a one-period election. Benchmark mode freshly encodes and encrypts real inputs for the sampled first
+period, outside the server aggregation timer. Later periods receive no submissions
+and echo carries first-period choices. This does not validate independent inputs
+across all periods of a full election. Any five-period ingestion projection is
 reported separately from observed time.
 
 ## Selected parameters
@@ -160,7 +161,10 @@ resuming the old one.
 
 ## Results and interpretation
 
-Each invocation creates a unique directory under `experiments/results/` with:
+Each invocation creates a directory such as
+`experiments/results/n10000-v2-20260909_183000Z/`. The timestamp is UTC (`Z`).
+If that name already exists, the runner appends `-2`, `-3`, etc., without
+overwriting results. Existing campaign folders are not renamed. Each directory contains:
 
 - `campaign.json`: configurations, binary hash, and repetition settings;
 - `executions.csv`: per-process status, elapsed time, seed, and result location;
@@ -202,7 +206,7 @@ remain, so timing runs must use final-only diagnostics with noise checks off.
 Older runs without the new timing columns retain only explicitly named legacy
 inclusive estimates. Client input preparation is excluded from both new tally
 metrics. Do not describe projected ingestion time as
-measured full-election time, or benchmark fixture checks as full-scale noise
+measured full-election time, or sampled-workload checks as full-scale noise
 validation. Parameter changes are part of the strategy comparison: these runs
 do not isolate the echo algorithm at identical cryptographic parameters.
 
@@ -274,4 +278,15 @@ choices in every period, generated with `randomVotingVector` for both components
 They exclude zero-vote scenarios. This changes the workload distribution from
 earlier runs (including delegation majorities), without changing the encrypted
 tally operations or FHE parameters. The synthetic screen supports an explicit missing-submission carry pattern
-in addition to concentrated, balanced, and random workloads. The sampled benchmark retains encrypted-zero timing fixtures.
+in addition to concentrated, balanced, and random workloads. The sampled benchmark now uses distinct freshly encrypted inputs in its measured period.
+
+## Fresh-input benchmark revision
+
+Rebuild for new runs. `execution_mode=sampled-fresh-input-benchmark` distinguishes
+new runs from historical zero-fixture benchmarks. Input encoding/encryption is
+recorded under `4.1-simulated-client-input-preparation`; only server aggregation
+is projected from the measured sample to n*T. Echo still closes all T periods,
+and final refresh remains after echo. Final plaintext verification models the
+first-period sample and later missing submissions. The experiment matrix and
+parameter files are unchanged. Existing results, figures, and parameter screens
+remain historical evidence; no large fresh-input benchmark was run for this edit.

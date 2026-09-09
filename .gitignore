@@ -3,8 +3,11 @@
 /bin/
 /experiments/validation/
 /analysis/
+/experiments/figures/
 /experiments/REDESIGN_VALIDATION.md
 /experiments/STREAMING_FLOW_VALIDATION.md
+experiments/FRESH_INPUT_BENCHMARK.md
+experiments/scripts/plot_period_runtime.py
 SHARED_MASK_UPDATE.md
 
 

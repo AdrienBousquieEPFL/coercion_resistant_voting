@@ -107,7 +107,7 @@ func TestPeriodStreamingEncryptedEcho(t *testing.T) {
 	}
 	ingressEvaluator := bgv.NewEvaluator(params, nil, true)
 	for p := range T {
-		a := streamAndAggregatePeriodInputs(params, encoder, encryptor, ingressEvaluator, layout, b, b, k, n, T, p, choices, delegation, 0, nil)
+		a := streamAndAggregatePeriodInputs(params, encoder, encryptor, ingressEvaluator, layout, b, b, k, n, T, p, choices, delegation, 0)
 		cp, cm := periodPlain(choices[p], delegation[p], n, b)
 		dp, _ := periodPlain(delegation[p], choices[p], n, k)
 		expectedInputs := 0
@@ -139,20 +139,46 @@ func TestPeriodStreamingEncryptedEcho(t *testing.T) {
 			t.Fatalf("refresh calls: got %d want %d", *state.refreshes, expected)
 		}
 	}
-	// Benchmark ingress is confined to period zero, but every period is closed.
-	fixture := prepareBenchmarkInputCiphertexts(params, encoder, encryptor)
-	state := newPeriodicEchoState(T, layout.ciphertextCount, "tree", evaluator, nil, nil)
-	for p := range T {
-		a := streamAndAggregatePeriodInputs(params, encoder, encryptor, ingressEvaluator, layout, b, b, k, n, T, p, nil, nil, n, fixture)
-		expected := 0
-		if p == 0 {
-			expected = 3 * n
+	// Real first-period benchmark submissions must carry through every later
+	// period, including partial samples and both encrypted echo algorithms.
+	for _, samples := range []int{n - 1, n} {
+		for _, mode := range []string{"tree", "sequential"} {
+			c, d := make([][]int, T), make([][]int, T)
+			for p := range T {
+				c[p], d[p] = make([]int, n), make([]int, n)
+				for v := range n {
+					c[p][v], d[p][v] = v%b, v%k
+				}
+			}
+			restrictBenchmarkSubmissions(c, d, samples)
+			state := newPeriodicEchoState(T, layout.ciphertextCount, mode, evaluator, nil, nil)
+			for p := range T {
+				a := streamAndAggregatePeriodInputs(params, encoder, encryptor, ingressEvaluator, layout, b, b, k, n, T, p, c, d, samples)
+				expected := 0
+				if p == 0 {
+					expected = 3 * samples
+				}
+				if a.inputCiphertextCount != expected {
+					t.Fatalf("benchmark period %d: got %d inputs, want %d", p, a.inputCiphertextCount, expected)
+				}
+				if p == 0 && a.clientPreparationWall <= 0 {
+					t.Fatal("benchmark did not record fresh client preparation")
+				}
+				if p > 0 && a.clientPreparationWall != 0 {
+					t.Fatal("later benchmark period prepared inputs")
+				}
+				cp, mask := periodPlain(c[p], d[p], n, b)
+				dp, _ := periodPlain(d[p], c[p], n, k)
+				check(a.candidateInputs, cp, b)
+				check(a.delegationInputs, dp, k)
+				check(a.sharedMasks, mask, b)
+				state.ClosePeriod(a.candidateInputs, a.sharedMasks, logical(b))
+			}
+			want := make([]uint64, n*b)
+			for v := range samples {
+				want[v*b+v%b] = T
+			}
+			check(state.Totals(), want, b)
 		}
-		if a.inputCiphertextCount != expected {
-			t.Fatalf("benchmark period %d processed %d input ciphertexts", p, a.inputCiphertextCount)
-		}
-		check(a.candidateInputs, make([]uint64, n*b), b)
-		state.ClosePeriod(a.candidateInputs, a.sharedMasks, logical(b))
 	}
-	check(state.Totals(), make([]uint64, n*b), b)
 }

@@ -5,8 +5,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
+from unittest.mock import patch
 
-from run_campaign import ROOT,command_for,selected_rows
+from run_campaign import ROOT,command_for,selected_rows,create_campaign_directory
 
 FAKE_RUNNER=r'''#!/usr/bin/env python3
 import csv,json,sys,tempfile
@@ -27,6 +29,17 @@ print('ASSERT PASSED: final tally')
 '''
 
 class CampaignMatrixTests(unittest.TestCase):
+    def test_timestamped_campaign_collision_preserves_existing_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch('run_campaign.datetime') as clock:
+                clock.now.return_value=datetime(2026,9,9,18,30,0,tzinfo=timezone.utc)
+                first=create_campaign_directory(Path(directory),10000)
+                marker=first/'keep.txt';marker.write_text('existing result')
+                second=create_campaign_directory(Path(directory),10000)
+            self.assertEqual(first.name,'n10000-v2-20260909_183000Z')
+            self.assertEqual(second.name,'n10000-v2-20260909_183000Z-2')
+            self.assertEqual(marker.read_text(),'existing result')
+
     def test_exact_requested_grid(self):
         counts={200:2,500:2,1000:2,5000:2,10000:4,25000:2,50000:4,100000:2,500000:2}
         with (ROOT/'experiments.csv').open() as f: rows=list(csv.DictReader(f))
@@ -80,6 +93,7 @@ class CampaignMatrixTests(unittest.TestCase):
             for _ in range(2):subprocess.run(command,check=True,capture_output=True,text=True)
             campaigns=list(output.iterdir());self.assertEqual(len(campaigns),2)
             for campaign in campaigns:
+                self.assertRegex(campaign.name,r'^n200-v2-\d{8}_\d{6}Z(?:-\d+)?$')
                 with (campaign/'executions.csv').open() as f:runs=list(csv.DictReader(f))
                 self.assertEqual(len(runs),3)
                 self.assertEqual(len({r['run_directory'] for r in runs}),3)
