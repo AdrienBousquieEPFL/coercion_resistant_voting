@@ -7,6 +7,7 @@
 /experiments/REDESIGN_VALIDATION.md
 /experiments/STREAMING_FLOW_VALIDATION.md
 experiments/FRESH_INPUT_BENCHMARK.md
+experiments/MASKED_ECHO_UPDATE.md
 experiments/scripts/plot_period_runtime.py
 SHARED_MASK_UPDATE.md
 

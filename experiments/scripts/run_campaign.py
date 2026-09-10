@@ -52,12 +52,14 @@ def main():
     parser.add_argument('--binary',type=Path,default=PROJECT/'bin'/'voting-experiments')
     parser.add_argument('--output-root',type=Path,default=ROOT/'results')
     parser.add_argument('--warmups',type=int,default=1)
-    parser.add_argument('--repeats',type=int,default=3)
+    parser.add_argument('--repeats',type=int,default=None,help='measured runs per configuration; default 1 for n>=10000, otherwise 3')
     parser.add_argument('--timeout',type=float,default=0,help='seconds per process; default 0 has no time limit, use 1800 for a 30-minute screening cap')
     parser.add_argument('--strategy',action='append',default=[])
     parser.add_argument('--shape',action='append',default=[],help='b,k; may be repeated')
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()
+    if args.repeats is None:
+        args.repeats=1 if args.n>=10000 else 3
     if args.warmups<1 or args.repeats<1 or args.timeout<0: parser.error('use at least one warm-up and one repetition; timeout must be nonnegative')
     rows=selected_rows(args.n,args.strategy,args.shape)
     if not rows: parser.error('no configurations match the filters')

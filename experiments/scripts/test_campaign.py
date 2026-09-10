@@ -29,6 +29,13 @@ print('ASSERT PASSED: final tally')
 '''
 
 class CampaignMatrixTests(unittest.TestCase):
+    def test_repetition_defaults_and_override(self):
+        for n, expected, extra in [(5000,3,[]),(10000,1,[]),(500000,1,[]),(10000,2,['--repeats=2'])]:
+            result=subprocess.run([sys.executable,str(ROOT/'scripts'/'run_campaign.py'),f'--n={n}','--dry-run']+extra,check=True,capture_output=True,text=True)
+            rows=[json.loads(line) for line in result.stdout.splitlines()]
+            self.assertTrue(rows)
+            self.assertTrue(all(r['warmups']==1 and r['repetitions']==expected for r in rows))
+
     def test_timestamped_campaign_collision_preserves_existing_files(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch('run_campaign.datetime') as clock:

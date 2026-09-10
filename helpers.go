@@ -204,9 +204,10 @@ func submissionMask(candidate, delegation int) uint64 {
 	return 0
 }
 
-// periodicEchoTotalsPlain evaluates u^p = u^(p-1)*(1-z^p) + input^p.
+// periodicEchoTotalsPlain evaluates u^p = u^(p-1)*(1-z^p) + input^p*z^p.
 // The shared mask updates both components together. A zero component in a real
 // submission clears its previous state; an all-zero submission preserves both.
+// The conditional replacement below implements this relation for boolean masks.
 func periodicEchoTotalsPlain(choices, otherChoices [][]int, voterCount, width int) []uint64 {
 	assert(voterCount >= 0 && width > 0, "invalid plaintext dimensions")
 	assert(len(choices) > 0 && len(otherChoices) == len(choices), "period schedules must match")

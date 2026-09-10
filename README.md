@@ -102,10 +102,12 @@ go run . --echo-mode=tree
 The refresh-interval flag is not used in tree mode. The program records it as
 zero in the run metadata.
 
+At period close, each aggregated candidate/delegation payload is multiplied
+by the aggregated shared mask. Tree leaves use this gated payload too.
 Sequential mode processes the periods in order using these equations:
 
 ```text
-u^p     = u^(p-1) * (1 - z^p) + input^p
+u^p     = u^(p-1) * (1 - z^p) + input^p * z^p
 total^p = total^(p-1) + u^p
 ```
 
@@ -298,7 +300,8 @@ when reporting benchmark timings. `--describe-parameters` prints a concrete
 profile without generating keys or running the tally.
 
 Period streaming is identified by `tally_flow=period-streaming-shared-mask-v2`
-in run metadata. Phases 4.1 and 4.2 repeat for successive periods (with an
+in historical run metadata. New masked-input echo runs use
+`tally_flow=period-streaming-masked-echo-v3`. Phases 4.1 and 4.2 repeat for successive periods (with an
 additional 4.2 interval for final refresh when enabled). Sum repeated phase
 rows within a run; the campaign summary does this before calculating medians
 across runs. Phase instrumentation performs its usual GC at each boundary,

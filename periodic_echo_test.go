@@ -10,6 +10,51 @@ import (
 	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
 )
 
+// Deliberately supply nonzero payloads under zero masks: ordinary generated
+// ballots have zero payload there and would not detect a missing multiplication.
+func TestEchoGatesAggregatedPayloads(t *testing.T) {
+	params := must1(bgv.NewParametersFromLiteral(bgv.ParametersLiteral{LogN: 10, LogQ: []int{50, 50, 50, 50, 50, 50, 50, 50}, LogP: []int{50}, PlaintextModulus: 65537}))
+	encoder := bgv.NewEncoder(params)
+	kg := rlwe.NewKeyGenerator(params)
+	sk, pk := kg.GenKeyPairNew()
+	encryptor, decryptor := rlwe.NewEncryptor(params, pk), rlwe.NewDecryptor(params, sk)
+	evaluator := bgv.NewEvaluator(params, rlwe.NewMemEvaluationKeySet(kg.GenRelinearizationKeyNew(sk)), true)
+	encode := func(values []uint64) *rlwe.Ciphertext {
+		pt := bgv.NewPlaintext(params, params.MaxLevel())
+		must(encoder.Encode(values, pt))
+		return must1(encryptor.EncryptNew(pt))
+	}
+	decode := func(ct *rlwe.Ciphertext) []uint64 {
+		values := make([]uint64, params.MaxSlots())
+		must(encoder.Decode(decryptor.DecryptNew(ct), values))
+		return values[:3]
+	}
+	masks := [][]uint64{{0, 1, 2}, {1, 0, 0}, {0, 1, 1}, {1, 0, 1}, {0, 1, 0}}
+	for _, mode := range []string{"tree", "sequential"} {
+		for _, periods := range []int{1, 5} {
+			for _, offset := range []uint64{0, 20} { // distinct candidate/delegate payloads
+				state := newPeriodicEchoState(periods, 1, mode, evaluator, nil, nil)
+				current, totals := make([]uint64, 3), make([]uint64, 3)
+				for p := range periods {
+					values := []uint64{uint64(p) + 7 + offset, uint64(p) + 11 + offset, uint64(p) + 13 + offset}
+					input, mask := encode(values), encode(masks[p])
+					state.ClosePeriod([]*rlwe.Ciphertext{input}, []*rlwe.Ciphertext{mask}, [][]uint64{{1, 1, 1}})
+					if !slices.Equal(decode(input), values) || !slices.Equal(decode(mask), masks[p]) {
+						t.Fatal("echo mutated supplied aggregates")
+					}
+					for i, z := range masks[p] {
+						current[i] = (current[i]*(1+65537-z) + values[i]*z) % 65537
+						totals[i] = (totals[i] + current[i]) % 65537
+					}
+				}
+				if got := decode(state.Totals()[0]); !slices.Equal(got, totals) {
+					t.Fatalf("%s periods=%d: got %v want %v", mode, periods, got, totals)
+				}
+			}
+		}
+	}
+}
+
 func TestIncrementalTreePreservesExactBatchGrouping(t *testing.T) {
 	for count := 1; count <= 65; count++ {
 		leaves := make([]string, count)

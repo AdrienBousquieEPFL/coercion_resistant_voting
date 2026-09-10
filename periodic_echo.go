@@ -97,7 +97,11 @@ func (s *periodicEchoState) ClosePeriod(inputs, masks []*rlwe.Ciphertext, logica
 	assert(s.received < s.periods, "too many echo periods")
 	assert(len(inputs) == s.blocks && len(masks) == s.blocks && len(logicalRanges) == s.blocks, "echo packing mismatch")
 	oneMinus := make([]*rlwe.Ciphertext, s.blocks)
+	gatedInputs := make([]*rlwe.Ciphertext, s.blocks)
 	for i := range oneMinus {
+		// Gate aggregated payloads at period close, including the first period
+		// and encrypted-zero periods. Both echo modes use this same transition.
+		gatedInputs[i] = s.mul(inputs[i], masks[i])
 		CountOp("MulNew")
 		neg := must1(s.evaluator.MulNew(masks[i], -1))
 		CountOp("AddNew")
@@ -106,20 +110,20 @@ func (s *periodicEchoState) ClosePeriod(inputs, masks []*rlwe.Ciphertext, logica
 	if s.mode == "tree" {
 		leaves := make([]echoSegment, s.blocks)
 		for i := range leaves {
-			leaves[i] = echoSegment{oneMinus[i], inputs[i], oneMinus[i], inputs[i]}
+			leaves[i] = echoSegment{oneMinus[i], gatedInputs[i], oneMinus[i], gatedInputs[i]}
 		}
 		s.tree.Push(leaves)
 	} else if s.received == 0 {
 		s.current = make([]*rlwe.Ciphertext, s.blocks)
 		s.totals = make([]*rlwe.Ciphertext, s.blocks)
 		for i := range inputs {
-			s.current[i] = inputs[i].CopyNew()
-			s.totals[i] = inputs[i].CopyNew()
+			s.current[i] = gatedInputs[i].CopyNew()
+			s.totals[i] = gatedInputs[i].CopyNew()
 		}
 	} else {
 		for i := range inputs {
 			carried := s.mul(s.current[i], oneMinus[i])
-			s.current[i] = s.add(carried, inputs[i])
+			s.current[i] = s.add(carried, gatedInputs[i])
 			CountOp("Add")
 			must(s.evaluator.Add(s.totals[i], s.current[i], s.totals[i]))
 		}

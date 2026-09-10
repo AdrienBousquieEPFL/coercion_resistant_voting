@@ -93,6 +93,8 @@ def main():
     plt.rcParams.update({'font.family': 'DejaVu Sans', 'font.size': 11, 'axes.spines.top': False,
                          'axes.spines.right': False, 'svg.fonttype': 'none'})
     counts = sorted({p['n'] for p in points})
+    repetitions = sorted({p['repetitions'] for p in points})
+    repetition_label = str(repetitions[0]) if len(repetitions)==1 else f'{repetitions[0]}–{repetitions[-1]}'
     for metric, filename, title, ylabel, divisor in [
         ('tally_seconds', 'runtime-by-voters', 'Tally runtime by number of voters', 'Tally wall time (seconds)', 1),
         ('tally_seconds', 'runtime-by-voters-minutes', 'Tally runtime by number of voters', 'Tally wall time (minutes)', 60),
@@ -139,7 +141,7 @@ def main():
                 'Includes refresh; excludes client encryption, setup and final decryption.') if metric == 'tally_seconds' else (
                 'Observed whole-process RAM, including setup and client preparation where present.\n'
                 + ('Shaded region: fresh encrypted benchmark inputs; one input period.' if any(r['input_execution_mode'] == 'sampled-fresh-input-benchmark' for r in runs) else 'Shaded region: benchmark inputs (reused zero ciphertexts; one input period).'))
-        fig.text(.10, .065, 'Median with min–max bars; 3 measured repetitions per point. Warm-ups excluded.\n'+note,
+        fig.text(.10, .065, f'Median / min–max; {repetition_label} measured runs per point. Single runs have no spread; warm-ups excluded.\n'+note,
                  fontsize=9, color='#56616c', va='top')
         fig.subplots_adjust(left=.10, right=.97, bottom=.22, top=.87)
         for ext in ['png', 'svg', 'pdf']:
@@ -148,7 +150,6 @@ def main():
     report = dict(measured_runs=len(runs), points=len(points), voter_counts=counts,
                   repetitions=sorted({p['repetitions'] for p in points}), skipped_campaigns=skipped,
                   hostname=runs[0]['hostname'], git_sha=runs[0]['git_sha'])
-    assert report['repetitions'] == [3], 'Update plot repetition annotation for this dataset'
     if not args.only_minutes:
         (args.output / 'provenance.json').write_text(json.dumps(report, indent=2)+'\n')
     print(json.dumps(report, indent=2))

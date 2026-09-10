@@ -43,7 +43,7 @@ def main():
             status='not-screened'
             if evidence:
                 flows={s['tally_flow'] for s in evidence}
-                provenance='shared-mask-v2' if flows=={'period-streaming-shared-mask-v2'} else 'historical-flow'
+                provenance='masked-echo-v3' if flows=={'period-streaming-masked-echo-v3'} else 'historical-flow'
                 status=f'passed-{provenance}-synthetic-screen' if all(s['status']=='passed' for s in evidence) else 'failed-synthetic-screen'
             writer.writerow(dict(experiment_id=row['experiment_id'],parameter_file=row['parameter_file'],logN=p['logN'],logQ_bits=sum(math.log2(int(q)) for q in p['Q']),logP_bits=sum(math.log2(int(q)) for q in p['P']),plaintext_modulus=p['plaintext_modulus'],Q_primes=len(p['Q']),P_primes=len(p['P']),lattice_security_bits=security[file.name]['minimum_bits'],voters_per_ciphertext=V,ciphertexts=C,refresh_boundaries=refresh_boundaries,refresh_ciphertexts=refresh_ct,ingestion_periods_measured=periods,input_additions_measured_max=3*n*periods,active_period_accumulator_ciphertexts=3*C,active_period_accumulator_coefficient_gib=3*C*2*ring_degree*len(p['Q'])*8/2**30,total_period_accumulator_ciphertexts_created=3*T*C,synthetic_trials=len(evidence),synthetic_min_margin_bits=min(margins) if margins else '',synthetic_status=status))
     print(f'Wrote {ROOT/"parameter-table.csv"}')

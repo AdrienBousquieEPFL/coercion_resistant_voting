@@ -96,7 +96,7 @@ func main() {
 	//v := []uint64{2, 7, 1, 8, 7, 2, 8, 1, 6, 3, 2, 7, 3, 6, 1, 8, 6, 3, 5, 4}
 
 	InitMetrics(runMeta{
-		TallyFlow:            "period-streaming-shared-mask-v2",
+		TallyFlow:            "period-streaming-masked-echo-v3",
 		OutputRoot:           *outputRootFlag,
 		ParameterProfile:     selectedProfile,
 		WorkloadSeed:         *workloadSeedFlag,

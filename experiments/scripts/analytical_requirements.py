@@ -18,7 +18,7 @@ def tree_depth(periods):
     if periods < 1:
         raise ValueError("periods must be positive")
     if periods == 1:
-        return (0, 0, 0, 0)
+        return (0, 1, 0, 1)  # a=c=1-mask; b=d=input*mask
     la, lb, lc, ld = tree_depth((periods + 1) // 2)
     ra, rb, rc, rd = tree_depth(periods // 2)
     return (
@@ -35,7 +35,7 @@ def requirements(n, log_n, mode, final_refresh):
     periods, width = 5, 5
     voters_per_ct = 2 * ((1 << (log_n - 1)) // width)
     blocks = (n + voters_per_ct - 1) // voters_per_ct
-    echo_depth = tree_depth(periods)[3] if mode == "tree" else periods - 1
+    echo_depth = tree_depth(periods)[3] if mode == "tree" else periods
     # The degree-five majority circuit adds three multiplication layers;
     # encrypted weight multiplication and the final weighted vote add two.
     downstream_depth = 5
@@ -52,7 +52,7 @@ def requirements(n, log_n, mode, final_refresh):
         "fresh_input_additions_all_periods": 3 * n * periods,
         "benchmark_input_additions": 3 * n,
         "period_accumulator_encryptions": 3 * blocks * periods,
-        "echo_ct_multiplications": (8 if mode == "tree" else 2) * blocks * (periods - 1),
+        "echo_ct_multiplications": (8 if mode == "tree" else 2) * blocks * (periods - 1) + 2 * blocks * periods,
         "echo_ct_additions": (8 if mode == "tree" else 4) * blocks * (periods - 1),
         "echo_multiplication_depth": echo_depth,
         "majority_polynomial_evaluations": 2 * blocks,
