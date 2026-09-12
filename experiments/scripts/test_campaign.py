@@ -48,15 +48,17 @@ class CampaignMatrixTests(unittest.TestCase):
             self.assertEqual(marker.read_text(),'existing result')
 
     def test_exact_requested_grid(self):
-        counts={200:2,500:2,1000:2,5000:2,10000:4,25000:2,50000:4,100000:2,500000:2}
+        counts={n:4 for n in (200,500,1000,5000,10000,25000,50000,100000,500000)}
         with (ROOT/'experiments.csv').open() as f: rows=list(csv.DictReader(f))
-        self.assertEqual(len(rows),22)
-        self.assertEqual(len({r['experiment_id'] for r in rows}),22)
+        self.assertEqual(len(rows),36)
+        self.assertEqual(len({r['experiment_id'] for r in rows}),36)
         self.assertEqual({int(r['n']) for r in rows},set(counts))
-        for n,count in counts.items(): self.assertEqual(len(selected_rows(n)),count)
+        for n,count in counts.items():
+            self.assertEqual(len(selected_rows(n)),count)
+            self.assertEqual({r['strategy'] for r in selected_rows(n)},
+                             {'tree-none','sequential-none','tree-final','sequential-final'})
         for row in rows:
             self.assertEqual((int(row['b']),int(row['k'])),(5,5))
-            if int(row['n']) not in [10000,50000]: self.assertIn(row['strategy'],['tree-none','sequential-none'])
             if row['strategy']=='sequential-none':
                 self.assertEqual(row['echo_mode'],'sequential')
                 self.assertEqual(row['refresh_mode'],'none')
@@ -68,7 +70,7 @@ class CampaignMatrixTests(unittest.TestCase):
             self.assertTrue((ROOT/row['parameter_file']).is_file())
             profile=json.loads((ROOT/row['parameter_file']).read_text())
             self.assertGreater(profile['plaintext_modulus'],int(row['n'])*int(row['qmax']))
-            self.assertEqual(profile['logN'],15 if row['refresh_mode']=='none' else 14)
+            self.assertEqual(profile['logN'],15 if row['refresh_mode']=='none' or int(row['n'])>=100000 else 14)
 
     def test_benchmark_has_one_full_input_period_and_five_echo_periods(self):
         for n in [200,5000,10000,25000,50000,500000]:
