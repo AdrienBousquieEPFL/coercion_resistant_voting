@@ -1,8 +1,0 @@
-component,wall_ms,cpu_ms,notes
-multiparty:public-key-generation,28.996,29.769,"whole local multiparty protocol, including party and coordinator work; no network latency; overlaps containing phases"
-multiparty:relinearization-key-generation,564.532,570.079,"whole local multiparty protocol, including party and coordinator work; no network latency; overlaps containing phases"
-multiparty:galois-key-generation,10286.960,10356.642,"whole local multiparty protocol, including party and coordinator work; no network latency; overlaps containing phases"
-4.1-aggregate-initialization,402.190,416.087,server-side creation of encrypted zero period aggregates; excludes streamed voter inputs
-4.1-simulated-client-input-preparation,211171.596,211893.124,"execution-mode=fresh; encoding and encryption of incoming candidate, delegation, and shared-mask ciphertexts; excluded from server ingestion time"
-4.1-server-aggregation,3588.509,3422.990,ciphertext additions into period aggregates; contains no input encoding or encryption
-multiparty:threshold-decryption,19.677,24.861,"whole local multiparty protocol, including party and coordinator work; no network latency; overlaps containing phases"
