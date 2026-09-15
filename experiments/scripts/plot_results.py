@@ -25,7 +25,7 @@ def read_csv(path):
         return list(csv.DictReader(f))
 
 
-def load_runs(root):
+def load_runs(root, hostname=None):
     runs, skipped, seen = [], [], set()
     for campaign in sorted(root.iterdir()):
         if not campaign.is_dir():
@@ -44,6 +44,9 @@ def load_runs(root):
                 raise ValueError('Duplicate run: ' + raw.name)
             seen.add(raw.name)
             meta = json.loads((raw / 'meta.json').read_text())
+            if hostname is not None and meta['hostname'] != hostname:
+                skipped.append(f"{campaign.name}/{raw.name}: hostname {meta['hostname']}")
+                continue
             cfg = configs[entry['experiment_id']]
             assert (meta['b'], meta['k'], meta['T'], int(cfg['parties'])) == (5, 5, 5, 3)
             phases = read_csv(raw / 'phases.csv')
@@ -71,9 +74,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--results', type=Path, default=Path(__file__).resolve().parents[1] / 'results')
     parser.add_argument('--output', type=Path, default=Path(__file__).resolve().parents[1] / 'figures')
+    parser.add_argument('--hostname', help='Include only runs from this recorded hostname')
     parser.add_argument('--only-minutes', action='store_true', help='Generate only the additional minutes plot')
     args = parser.parse_args()
-    runs, skipped = load_runs(args.results)
+    runs, skipped = load_runs(args.results, args.hostname)
     groups = defaultdict(list)
     for r in runs:
         groups[(r['strategy'], r['n'])].append(r)

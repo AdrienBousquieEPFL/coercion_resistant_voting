@@ -12,12 +12,14 @@ import signal
 import subprocess
 import time
 
+from generate_campaigns import count_label
+
 ROOT=Path(__file__).resolve().parents[1]
 PROJECT=ROOT.parent
 
 def create_campaign_directory(root, n):
     """Create a timestamped v2 campaign without reusing an existing directory."""
-    name=f'n{n}-v2-{datetime.now(timezone.utc):%Y%m%d_%H%M%SZ}'
+    name=f'n{count_label(n)}-v2-{datetime.now(timezone.utc):%Y%m%d_%H%M%SZ}'
     suffix=1
     while True:
         directory=root/(name if suffix==1 else f'{name}-{suffix}')
@@ -27,8 +29,8 @@ def create_campaign_directory(root, n):
         except FileExistsError:
             suffix+=1
 
-def selected_rows(n, strategies=(), shapes=()):
-    with (ROOT/'experiments.csv').open() as f:
+def selected_rows(n, strategies=(), shapes=(), experiment_set=None):
+    with (ROOT/(f'experiments-{experiment_set}.csv' if experiment_set else 'experiments.csv')).open() as f:
         rows=[r for r in csv.DictReader(f) if int(r['n'])==n]
     return [r for r in rows if (not strategies or r['strategy'] in strategies) and (not shapes or f"{r['b']},{r['k']}" in shapes)]
 
@@ -46,9 +48,21 @@ def stop_process(process):
         except subprocess.TimeoutExpired:
             os.killpg(process.pid,signal.SIGKILL); process.wait()
 
+def parse_count(value):
+    text=str(value)
+    multiplier=1000 if text.endswith('k') else 1000000 if text.endswith('M') else 1
+    try:
+        n=int(text[:-1] if multiplier != 1 else text)*multiplier
+        if n <= 0: raise ValueError()
+        return n
+    except ValueError:
+        raise argparse.ArgumentTypeError('use a positive integer, 1k, 10k, or 1M')
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--n',required=True,type=int)
+    parser.add_argument('--n',required=True,type=parse_count)
+    parser.add_argument('--set', dest='experiment_set', choices=['b3-k5','b3-k100'], help='select one experiment set')
     parser.add_argument('--binary',type=Path,default=PROJECT/'bin'/'voting-experiments')
     parser.add_argument('--output-root',type=Path,default=ROOT/'results')
     parser.add_argument('--warmups',type=int,default=1)
@@ -61,7 +75,7 @@ def main():
     if args.repeats is None:
         args.repeats=1 if args.n>=10000 else 3
     if args.warmups<1 or args.repeats<1 or args.timeout<0: parser.error('use at least one warm-up and one repetition; timeout must be nonnegative')
-    rows=selected_rows(args.n,args.strategy,args.shape)
+    rows=selected_rows(args.n,args.strategy,args.shape,args.experiment_set)
     if not rows: parser.error('no configurations match the filters')
     binary=args.binary.resolve()
     for row in rows:
@@ -69,6 +83,8 @@ def main():
         expected='benchmark' if int(row['n'])>=10000 else 'fresh'
         if row['execution_mode']!=expected or (expected=='benchmark' and int(row['sample_voters'])!=int(row['n'])):
             parser.error(f"matrix ingestion scope mismatch: {row['experiment_id']}")
+    if args.experiment_set:
+        args.output_root = args.output_root / args.experiment_set
     if args.dry_run:
         for row in rows:
             seed=f"v1-n{row['n']}-b{row['b']}-k{row['k']}-measured-0"
@@ -78,7 +94,7 @@ def main():
     args.output_root.mkdir(parents=True,exist_ok=True)
     campaign=create_campaign_directory(args.output_root.resolve(),args.n)
     (campaign/'logs').mkdir()
-    manifest=dict(n=args.n,warmups=args.warmups,repeats=args.repeats,timeout_seconds=args.timeout,binary=str(binary),binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),encryption_randomness='fresh-unseeded',configurations=rows)
+    manifest=dict(experiment_set=args.experiment_set,n=args.n,warmups=args.warmups,repeats=args.repeats,timeout_seconds=args.timeout,binary=str(binary),binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),encryption_randomness='fresh-unseeded',configurations=rows)
     (campaign/'campaign.json').write_text(json.dumps(manifest,indent=2)+'\n')
     print(f'Campaign output: {campaign}',flush=True)
     fields=['experiment_id','strategy','execution_mode','run_kind','repetition','status','exit_code','elapsed_seconds','run_directory','log','parameter_id','workload_seed','process_peak_rss_mib']

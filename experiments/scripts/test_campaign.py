@@ -36,6 +36,18 @@ class CampaignMatrixTests(unittest.TestCase):
             self.assertTrue(rows)
             self.assertTrue(all(r['warmups']==1 and r['repetitions']==expected for r in rows))
 
+    def test_compact_counts_and_set_selection(self):
+        for label,k,count in [('1k',5,2),('1M',5,2),('100k',100,4)]:
+            result=subprocess.run([sys.executable,str(ROOT/'scripts'/'run_campaign.py'),
+                f'--n={label}',f'--set=b3-k{k}','--dry-run'],check=True,capture_output=True,text=True)
+            rows=[json.loads(line) for line in result.stdout.splitlines()]
+            self.assertEqual(len(rows),count)
+            self.assertTrue(all(r['experiment'].startswith(f'n{label}-b3-k{k}-') for r in rows))
+            self.assertTrue(all(f'--k={k}' in r['command'] for r in rows))
+        result=subprocess.run([sys.executable,str(ROOT/'scripts'/'run_campaign.py'),
+            '--n=1M','--set=b3-k100','--dry-run'],capture_output=True,text=True)
+        self.assertNotEqual(result.returncode,0)
+
     def test_timestamped_campaign_collision_preserves_existing_files(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch('run_campaign.datetime') as clock:
@@ -43,34 +55,27 @@ class CampaignMatrixTests(unittest.TestCase):
                 first=create_campaign_directory(Path(directory),10000)
                 marker=first/'keep.txt';marker.write_text('existing result')
                 second=create_campaign_directory(Path(directory),10000)
-            self.assertEqual(first.name,'n10000-v2-20260909_183000Z')
-            self.assertEqual(second.name,'n10000-v2-20260909_183000Z-2')
+            self.assertEqual(first.name,'n10k-v2-20260909_183000Z')
+            self.assertEqual(second.name,'n10k-v2-20260909_183000Z-2')
             self.assertEqual(marker.read_text(),'existing result')
 
     def test_exact_requested_grid(self):
-        counts={n:4 for n in (200,500,1000,5000,10000,25000,50000,100000,500000)}
+        counts=(200,500,1000,5000,10000,25000,50000,100000,500000,1000000)
         with (ROOT/'experiments.csv').open() as f: rows=list(csv.DictReader(f))
-        self.assertEqual(len(rows),36)
-        self.assertEqual(len({r['experiment_id'] for r in rows}),36)
-        self.assertEqual({int(r['n']) for r in rows},set(counts))
-        for n,count in counts.items():
-            self.assertEqual(len(selected_rows(n)),count)
-            self.assertEqual({r['strategy'] for r in selected_rows(n)},
-                             {'tree-none','sequential-none','tree-final','sequential-final'})
-        for row in rows:
-            self.assertEqual((int(row['b']),int(row['k'])),(5,5))
-            if row['strategy']=='sequential-none':
-                self.assertEqual(row['echo_mode'],'sequential')
-                self.assertEqual(row['refresh_mode'],'none')
-                self.assertEqual(row['refresh_interval'],'0')
+        self.assertEqual(len(rows),52)
+        self.assertEqual(len({r['experiment_id'] for r in rows}),52)
         for n in counts:
-            self.assertEqual({r['strategy'] for r in selected_rows(n) if r['refresh_mode']=='none'},{'tree-none','sequential-none'})
-            self.assertEqual(len({r['parameter_file'] for r in selected_rows(n) if r['refresh_mode']=='none'}),2)
+            small=selected_rows(n,experiment_set='b3-k5')
+            large=selected_rows(n,experiment_set='b3-k100')
+            self.assertEqual({r['strategy'] for r in small},{'sequential-none','sequential-final'})
+            self.assertEqual({r['strategy'] for r in large},
+                             {'tree-none','sequential-none','tree-final','sequential-final'} if n<=100000 else set())
         for row in rows:
-            self.assertTrue((ROOT/row['parameter_file']).is_file())
+            self.assertEqual(int(row['b']),3)
+            self.assertIn(int(row['k']),(5,100))
             profile=json.loads((ROOT/row['parameter_file']).read_text())
             self.assertGreater(profile['plaintext_modulus'],int(row['n'])*int(row['qmax']))
-            self.assertEqual(profile['logN'],15 if row['refresh_mode']=='none' or int(row['n'])>=100000 else 14)
+            self.assertEqual(int(row['T']),5)
 
     def test_benchmark_has_one_full_input_period_and_five_echo_periods(self):
         for n in [200,5000,10000,25000,50000,500000]:
@@ -85,7 +90,7 @@ class CampaignMatrixTests(unittest.TestCase):
 
     def test_only_final_refresh_for_both_modes(self):
         for n in [10000,50000]:
-            refreshed=[r for r in selected_rows(n) if r['refresh_mode']=='collective']
+            refreshed=[r for r in selected_rows(n,experiment_set='b3-k100') if r['refresh_mode']=='collective']
             self.assertEqual(len(refreshed),2)
             self.assertEqual({r['strategy'] for r in refreshed},{'tree-final','sequential-final'})
             for row in refreshed:
@@ -98,7 +103,7 @@ class CampaignMatrixTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);binary=root/'fake runner.py';binary.write_text(FAKE_RUNNER);binary.chmod(0o755)
             output=root/'results'
-            command=[sys.executable,str(ROOT/'scripts'/'run_campaign.py'),'--n=200','--shape=5,5','--strategy=tree-none','--binary',str(binary),'--output-root',str(output),'--warmups=1','--repeats=2']
+            command=[sys.executable,str(ROOT/'scripts'/'run_campaign.py'),'--n=200','--shape=3,100','--strategy=tree-none','--binary',str(binary),'--output-root',str(output),'--warmups=1','--repeats=2']
             for _ in range(2):subprocess.run(command,check=True,capture_output=True,text=True)
             campaigns=list(output.iterdir());self.assertEqual(len(campaigns),2)
             for campaign in campaigns:
@@ -125,7 +130,7 @@ class CampaignMatrixTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);binary=root/'fake';binary.write_text(FAKE_RUNNER);binary.chmod(0o755)
             output=root/'results'
-            subprocess.run([sys.executable,str(ROOT/'scripts'/'run_campaign.py'),'--n=200','--shape=5,5','--strategy=tree-none','--binary',str(binary),'--output-root',str(output),'--repeats=1'],check=True,capture_output=True)
+            subprocess.run([sys.executable,str(ROOT/'scripts'/'run_campaign.py'),'--n=200','--shape=3,100','--strategy=tree-none','--binary',str(binary),'--output-root',str(output),'--repeats=1'],check=True,capture_output=True)
             campaign=next(output.iterdir())
             for phase in campaign.glob('raw/*/phases.csv'):
                 with phase.open() as f: rows=list(csv.DictReader(f))
@@ -140,7 +145,7 @@ class CampaignMatrixTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);binary=root/'sleeper';binary.write_text('#!/usr/bin/env python3\nimport time\ntime.sleep(10)\n');binary.chmod(0o755)
             output=root/'results'
-            result=subprocess.run([sys.executable,str(ROOT/'scripts'/'run_campaign.py'),'--n=200','--shape=5,5','--strategy=tree-none','--binary',str(binary),'--output-root',str(output),'--timeout=0.1'],capture_output=True,text=True)
+            result=subprocess.run([sys.executable,str(ROOT/'scripts'/'run_campaign.py'),'--n=200','--shape=3,100','--strategy=tree-none','--binary',str(binary),'--output-root',str(output),'--timeout=0.1'],capture_output=True,text=True)
             self.assertNotEqual(result.returncode,0)
             campaign=next(output.iterdir())
             with (campaign/'executions.csv').open() as f:runs=list(csv.DictReader(f))

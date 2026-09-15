@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Report circuit requirements, not a noise-certified choice of Q or P.
 
-Scope: current shared-mask flow, b=k=5, T=5, qmax=1. No FHE execution.
+Scope: current shared-mask flow, configurable b/k, T=5, qmax=1. No FHE execution.
 The four families describe parameter coverage; they do not change experiments.csv.
 """
 
@@ -10,7 +10,7 @@ import csv
 import sys
 
 
-VOTER_COUNTS = (200, 500, 1000, 5000, 10000, 25000, 50000, 100000, 500000)
+VOTER_COUNTS = (200, 500, 1000, 5000, 10000, 25000, 50000, 100000, 500000, 1000000)
 
 
 def tree_depth(periods):
@@ -29,10 +29,10 @@ def tree_depth(periods):
     )
 
 
-def requirements(n, log_n, mode, final_refresh):
-    if n < 5 or log_n not in (14, 15) or mode not in ("tree", "sequential"):
-        raise ValueError("requires n>=5, logN in {14,15}, and a supported echo mode")
-    periods, width = 5, 5
+def requirements(n, log_n, mode, final_refresh, b=3, k=5, periods=5):
+    if b < 1 or k < 1 or n <= k or log_n not in (14, 15, 16) or periods != 5 or mode not in ("tree", "sequential"):
+        raise ValueError("requires positive b/k, n>k, T=5, logN in {14,15,16}, and a supported echo mode")
+    width = max(b, k)
     voters_per_ct = 2 * ((1 << (log_n - 1)) // width)
     blocks = (n + voters_per_ct - 1) // voters_per_ct
     echo_depth = tree_depth(periods)[3] if mode == "tree" else periods
@@ -42,8 +42,8 @@ def requirements(n, log_n, mode, final_refresh):
     return {
         "family": f"{mode}-{'final-refresh' if final_refresh else 'none'}",
         "n": n,
-        "b": width,
-        "k": width,
+        "b": b,
+        "k": k,
         "T": periods,
         "candidate_logN": log_n,
         "voters_per_ciphertext": voters_per_ct,
@@ -71,11 +71,13 @@ def requirements(n, log_n, mode, final_refresh):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n", type=int, nargs="+", default=VOTER_COUNTS)
-    parser.add_argument("--logN", type=int, nargs="+", choices=(14, 15), default=(14, 15))
+    parser.add_argument("--logN", type=int, nargs="+", choices=(14, 15, 16), default=(14, 15))
+    parser.add_argument("--b", type=int, default=3)
+    parser.add_argument("--k", type=int, default=5)
     args = parser.parse_args()
-    if any(n < 5 for n in args.n):
-        parser.error("n must be at least k=5")
-    rows = [requirements(n, log_n, mode, refresh)
+    if args.b < 1 or args.k < 1 or any(n <= args.k for n in args.n):
+        parser.error("b/k must be positive and n must exceed k")
+    rows = [requirements(n, log_n, mode, refresh, args.b, args.k)
             for n in args.n for log_n in args.logN
             for mode in ("tree", "sequential") for refresh in (False, True)]
     writer = csv.DictWriter(sys.stdout, fieldnames=rows[0], lineterminator="\n")

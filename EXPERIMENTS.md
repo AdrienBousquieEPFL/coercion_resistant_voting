@@ -1,308 +1,170 @@
-# Tally experiment campaign
+# Runtime experiment sets
 
-This document describes the current 36-configuration runtime campaign for the
-Go/Lattigo tally. Its purpose is to compare server runtime, memory, and refresh
-cost across election sizes and echo strategies. ZK proof generation and
-verification are outside this campaign.
+The active campaign uses the period-streaming masked-input echo implementation,
+Lattigo v6.2.0, Go 1.26.1, `b=3`, `T=5`, `qmax=1`, and three multiparty parties.
 
-The executable configuration list is [experiments/experiments.csv](experiments/experiments.csv).
-The [parameter table](experiments/parameter-table.csv) records each case's
-parameter assignment, packing, ciphertext counts, estimated security, and
-synthetic noise-screen results. These files contain the individual cases;
-this document explains their scope and interpretation.
+| Set | k | Voter counts | Strategies | Cases |
+|---|---:|---|---|---:|
+| `b3-k5` | 5 | 200, 500, 1k, 5k, 10k, 25k, 50k, 100k, 500k, 1M | Sequential, without and with final refresh | 20 |
+| `b3-k100` | 100 | 200, 500, 1k, 5k, 10k, 25k, 50k, 100k | Tree and sequential, each without and with final refresh | 32 |
 
-## Configurations
+The versioned matrices are `experiments/experiments-b3-k5.csv` and
+`experiments/experiments-b3-k100.csv`. `experiments/experiments.csv` contains their
+union. Regenerate them with `python3 experiments/scripts/generate_campaigns.py`.
+Numeric dimensions remain integers in CSV/JSON. Experiment identifiers, launcher
+filenames, campaign directory names, and new raw run directories abbreviate exact
+thousands as `1k`, `10k`, etc., and one million as `1M`. Historical files are not renamed.
 
-All cases use `b=k=5`, `T=5`, `qmax=1`, three multiparty participants, and
-Lattigo v6.2.0. Candidate and delegation votes share one encrypted voter-period mask. Inputs are added directly.
+## Validation status before running
 
-| Voters `n` | Input execution | Strategies | Cases |
-|---:|---|---|---:|
-| 200 | Fresh, five periods | Both no-refresh modes; tree and sequential final refresh | 4 |
-| 500 | Fresh, five periods | Both no-refresh modes; tree and sequential final refresh | 4 |
-| 1,000 | Fresh, five periods | Both no-refresh modes; tree and sequential final refresh | 4 |
-| 5,000 | Fresh, five periods | Both no-refresh modes; tree and sequential final refresh | 4 |
-| 10,000 | Benchmark, one input period | Both no-refresh modes; tree and sequential final refresh | 4 |
-| 25,000 | Benchmark, one input period | Both no-refresh modes; tree and sequential final refresh | 4 |
-| 50,000 | Benchmark, one input period | Both no-refresh modes; tree and sequential final refresh | 4 |
-| 100,000 | Benchmark, one input period | Both no-refresh modes; tree and sequential final refresh | 4 |
-| 500,000 | Benchmark, one input period | Both no-refresh modes; tree and sequential final refresh | 4 |
-| **Total** | | | **36** |
+The selected policy is to keep the original `k=5` no-refresh profiles for now:
+Q≈416 bits through 50k and Q≈480 bits at 100k–500k. Their synthetic checks at
+50k and 500k retained approximately 1.60 and 12.84 bits of noise margin,
+respectively, below the 20-bit screening requirement. Those checks stopped
+before final tally verification; they did not establish a final-tally mismatch.
+An experiment marked `passed` must still complete and verify its decrypted final
+tally against the plaintext reference.
 
-There are nine tree/no-refresh cases, nine sequential/no-refresh cases, and
-18 final-refresh comparisons (nine tree, nine sequential). Other `(b,k)` shapes
-and all intermediate refresh intervals are outside this campaign. The old 75-case
-campaign and its validation reports are historical; its raw results are retained.
-
-At `n>=10000`, the scripts use `benchmark --sample-voters=n`: the ingestion
-measurement processes all voters for one period. The downstream echo and tally
-still model all five periods, using one set of target-sized period accumulators
-at a time. This is
-not a one-period election. Benchmark mode freshly encodes and encrypts real inputs for the sampled first
-period, outside the server aggregation timer. Later periods receive no submissions
-and echo carries first-period choices. This does not validate independent inputs
-across all periods of a full election. Any five-period ingestion projection is
-reported separately from observed time.
-
-## Selected parameters
-
-**Historical noise validation:** the following profiles were screened before
-the aggregated-input mask multiplication was added to echo. Their lattice
-security estimates still apply, but noise margins must be revalidated for
-`period-streaming-masked-echo-v3` before relying on large runs.
-
-The selected files are in [experiments/parameters/aligned-final/](experiments/parameters/aligned-final/).
-They contain exact Q/P primes and use `Q mod t = t-1` to remove the scale
-factor introduced by invariant multiplication. They are generated by
-`generate_aligned_parameters.py` and checked through pinned Lattigo v6.2.0.
-Each runtime records the concrete parameter identifier.
-
-| Family | Voter range | LogN | Approx. log2 Q | Approx. log2 P | t | Estimated classical security |
-|---|---|---:|---:|---:|---:|---:|
-| Tree, no refresh | 200–50,000 | 15 | 384 (8 primes) | 61 | 65,537 | 241.19 bits |
-| Sequential, no refresh | 200–50,000 | 15 | 416 (8 primes) | 61 | 65,537 | 219.88 bits |
-| Either mode, final refresh | 200–50,000 | 14 | 288 (6 primes) | 55 | 65,537 | 133.44 bits |
-| Tree, no refresh | 100,000–500,000 | 15 | 440 (8 primes) | 61 | 786,433 | 205.86 bits |
-| Sequential, no refresh | 100,000–500,000 | 15 | 480 (8 primes) | 61 | 786,433 | 185.42 bits |
-| Either mode, final refresh | 100,000–500,000 | 15 | 360 (6 primes) | 120 (2 primes) | 786,433 | 217.83 bits |
-
-Each echo/refresh family has a separate file for each plaintext modulus. The
-two refreshed families share the same numerical parameters within each voter
-range. The campaign runs both final-refresh modes at all nine voter counts.
-
-Refresh means one boundary **after the completed echo**, refreshing `2*C`
-ciphertexts. Tree uses interval 0; sequential uses interval T=5, which disables
-all intermediate refreshes. Both no-refresh modes use interval 0.
-
-These are analytically guided, empirically screened choices, not proven minima
-or runtime optima. Depth alone is insufficient to choose Q. The plaintext
-modulus exceeds `n*qmax`, and security uses the exact product Q*P, a uniform
-ternary unknown secret share, error sigma 3.2, unlimited samples, and classical
-ADPS16 core-SVP costs. Fresh estimator results at revision
-`53da5982597709ba0fdf94ea37a84d822310fd84` are committed in
-[parameter-security.json](experiments/parameter-security.json).
-These attack estimates do not constitute a complete protocol security proof.
-The prototype refresh uses ordinary error noise; deployment flooding remains
-outside this validation.
-
-## Validation status
-
-See [FINAL_PARAMETER_VALIDATION.md](experiments/FINAL_PARAMETER_VALIDATION.md)
-for checks, failed candidates, exact generation settings, source provenance,
-and limitations. Synthetic screens execute the current echo and downstream
-pipeline with fresh compact payload/mask ciphertexts. Residual amplification
-represents target-block ingestion and cross-block reductions. They check
-plaintext correctness and a minimum 20-bit recorded coefficient-noise margin.
-They are not independent-encryption full-electorate tests or a proven noise bound.
-
-The checked-in [parameter-noise-screens.csv](experiments/parameter-noise-screens.csv)
-records successful selected-profile screens. Historical results using the old
-600-bit shared profile and intervals 2/3 remain historical. No previous raw
-results are overwritten. Full-scale runtime and fresh-input validation remain
-work for the experiment computer.
-
-## Running the campaign
-
-Copy the whole project, including `experiments/`, to the experiment computer.
-Use Bash, Python 3, and Go **1.26.1**. On a new machine, fetch the pinned modules
-once if they are not already cached:
+The stronger alternatives remain available as
+`experiments/parameters/b3-k5/sequential-none-50k.json` (Q≈480 bits) and
+`experiments/parameters/b3-k5/sequential-none-500k.json` (Q≈540 bits).
+The new 1M profiles, refresh profiles, and `k=100` selections are unchanged. To opt into
+them for the first set, regenerate the matrices with:
 
 ```bash
-cd coercion_resistant_voting
-go mod download
+python3 experiments/scripts/generate_campaigns.py --strengthen-small-k
+```
+
+Running the generator without this flag restores the original-parameter choice.
+This does not change any existing parameter JSON. Consult the validation report
+for the completed screening coverage. Fresh exact-modulus lattice-security
+estimates completed on 2026-09-16: all 16 profiles (nine distinct ring-degree/modulus
+pairs), including the stronger alternatives, passed the 128-bit classical target.
+The minimum estimate is 133.444 bits under the recorded ADPS16 core-SVP model.
+This security check is separate from the noise-margin checks above.
+
+## Run
+
+From `coercion_resistant_voting/`, rebuild with the installed pinned Go toolchain:
+
+```bash
 ./experiments/scripts/build.sh
-```
 
-The build script disables dependency downloads and requires Go 1.26.1 already
-installed. If necessary, set `GO_BIN` to that executable's path. Sage and the
-lattice estimator are not needed to run the runtime campaign.
+# First set (20 configurations).
+for n in 200 500 1k 5k 10k 25k 50k 100k 500k 1M; do
+  ./experiments/scripts/run_n${n}.sh --set b3-k5 || break
+done
 
-Preview a slice, then execute it:
-
-```bash
-./experiments/scripts/run_n10000.sh --dry-run
-./experiments/scripts/run_n10000.sh
-```
-
-`--dry-run` prints the selected commands without executing experiments or
-creating results. Each `run_n*.sh` script selects all configurations for its
-voter count and uses the parameter files from the matrix.
-
-To execute the complete campaign sequentially, stopping on the first failure:
-
-```bash
-for n in 200 500 1000 5000 10000 25000 50000 100000 500000; do
-  ./experiments/scripts/run_n${n}.sh || break
+# Second set (32 configurations).
+for n in 200 500 1k 5k 10k 25k 50k 100k; do
+  ./experiments/scripts/run_n${n}.sh --set b3-k100 || break
 done
 ```
 
-Defaults are one warm-up plus three measured executions for n<10000, and
-one warm-up plus one measured execution for n>=10000. Each execution uses a
-fresh process: 104 process executions for the complete 36-case campaign.
-Explicit `--repeats` overrides the measured-run count. A single measurement
-provides no estimate of run-to-run variation.
-Warm-ups are excluded from summaries. Workload seeds match across strategies
-for the same dimensions and repetition; encryption randomness does not.
-The runtime scripts use `--diagnostic-checks=final`, without noise diagnostics,
-and a one-second metrics sampler.
-
-Useful options, forwarded by every launcher:
+Add `--dry-run` to preview commands without FHE execution. For example:
 
 ```bash
-# Restrict a slice and change measured repetition count:
-./experiments/scripts/run_n10000.sh --shape 5,5 --strategy sequential-final --repeats 5
-
-# Preview the new largest sequential/no-refresh case:
-./experiments/scripts/run_n500000.sh --strategy sequential-none --dry-run
-
-# Apply an optional 30-minute cap per process:
-./experiments/scripts/run_n10000.sh --timeout 1800
+./experiments/scripts/run_n1M.sh --set b3-k5 --dry-run
+./experiments/scripts/run_n100k.sh --set b3-k100 --strategy sequential-final --dry-run
 ```
 
-Strategy names are `tree-none`, `sequential-none`, `tree-final`, and
-`sequential-final`. Shape and strategy filters may be repeated. The runtime timeout
-default is **0 (no limit)**; there is no automatic 25-minute prediction gate.
-Failures, missing final correctness results, or timeouts stop that invocation
-and preserve its logs. Restarting a launcher creates a new campaign rather than
-resuming the old one.
+The runner also accepts integer counts (`--n 1000000`), `--shape 3,100`, repeated
+`--strategy` filters, `--binary`, and `--output-root`. Without `--set` it selects
+all configurations for that voter count from the combined matrix. Shape filters
+are optional; `--set` is the clearest way to separate the two campaigns.
 
-## Results and interpretation
+Defaults are one warm-up per configuration and three measured repetitions for
+`n<10k`; one warm-up and one measured repetition for `n>=10k`. Thus the first set
+has 56 process executions and the second has 96, totaling 152. `--repeats` overrides
+the measurement count. Warm-ups are excluded from summaries. Runs use fresh
+processes and independent encryption randomness; workload seeds match across
+strategies with the same dimensions and repetition. There is no default timeout;
+`--timeout 1800` imposes a 30-minute cap per execution. Any failure stops that
+campaign and the shell loops above stop at the failed voter count.
 
-Each invocation creates a directory such as
-`experiments/results/n10000-v2-20260909_183000Z/`. The timestamp is UTC (`Z`).
-If that name already exists, the runner appends `-2`, `-3`, etc., without
-overwriting results. Existing campaign folders are not renamed. Each directory contains:
+## Measurement scope
 
-- `campaign.json`: configurations, binary hash, and repetition settings;
-- `executions.csv`: per-process status, elapsed time, seed, and result location;
-- `logs/` and `raw/`: separate warm-up and measured execution evidence;
-- `measurements-summary.csv`: medians, minima, maxima, and sample counts for
-  successful measured executions, generated after a successful campaign.
+Below 10k, all voters may submit across five periods. At 10k and above, benchmark
+mode freshly encodes and encrypts inputs for all n sampled voters in period zero;
+other periods have no submissions, but all five periods initialize accumulators,
+close echo, and execute the downstream tally. Client preparation is separately
+timed and excluded from measured server ingestion.
 
-New runs record `tally_flow=period-streaming-masked-echo-v3`. Phases 4.1 and
-4.2 alternate across periods, and final refresh contributes another 4.2 row.
-The summary sums repeated phase timings within each run before computing
-statistics across measured runs. The existing phase instrumentation forces GC
-at boundaries; the increased number of boundaries can affect total runtime.
-Do not pool timings from the old batch flow with the new streaming flow.
+The projected five-period tally equals accumulator initialization + measured
+server ingestion times five + observed downstream server tally + collective
+refresh. The projection multiplies ingestion only. It is not a measured
+five-period full-electorate runtime. Summaries also retain observed tally time
+with its one-input-period scope. Setup and final threshold decryption are outside
+the tally metric. Multiparty phase timing overlaps containing phases, so the
+summarizer subtracts it before explicitly adding refresh; do not double count it.
 
-Raw runs include metadata, phase/component timings, operation counts, object
-sizes, sampled resource use, and `summary.json`. The summary script can also be
-invoked on an interrupted campaign to summarize only its successful measured
-runs:
+Memory is the observed whole-process OS peak RSS, including setup and client
+preparation. A single measured run provides no estimate of variability.
+Timing runs use final-only correctness diagnostics, without secret-assisted noise
+checks. Benchmark workloads do not prove correctness for all election schedules.
 
-```bash
-python3 experiments/scripts/summarize.py experiments/results/<campaign-directory>
-```
+## Circuit depth and packing
 
-Use `server_observed_wall_ms:<scope>` for accumulator initialization plus
-server aggregation and downstream phases with multiparty time
-removed. Use `tally_observed_wall_ms:<scope>` for the same computation **including
-all refresh calls**, and `tally_refresh_wall_ms` for refresh alone. Here scope is
-`one_input_period` or `five_input_periods`; benchmark initialization and downstream
-work still cover all five periods. Five-period projections are separately named
-`server_projected_wall_ms:five_input_periods` and
-`tally_projected_wall_ms:five_input_periods`.
+Both sets have the same ciphertext multiplication depth because the majority
+polynomial depends on T=5, not k. The masked-input leaf has depth 1; the midpoint
+tree's total has depth 4, and sequential echo has depth 5. The degree-five
+majority polynomial adds three layers, encrypted weight multiplication adds one,
+and the final weighted-vote multiplication adds one.
 
-`components.csv` records local multiparty protocols separately (including their
-coordinator work); collective key generation and final threshold decryption
-are outside both tally metrics. `phases.csv` records the overlapping multiparty
-wall/CPU time within each phase so the summary can subtract it. Diagnostic
-threshold decryptions have their own component. Other diagnostic overhead can
-remain, so timing runs must use final-only diagnostics with noise checks off.
-Older runs without the new timing columns retain only explicitly named legacy
-inclusive estimates. Client input preparation is excluded from both new tally
-metrics. Do not describe projected ingestion time as
-measured full-election time, or sampled-workload checks as full-scale noise
-validation. Parameter changes are part of the strategy comparison: these runs
-do not isolate the echo algorithm at identical cryptographic parameters.
+| Mode | Echo depth | Downstream depth | Without refresh | Longest segment with final refresh |
+|---|---:|---:|---:|---:|
+| Tree | 4 | 5 | 9 | 5 |
+| Sequential | 5 | 5 | 10 | 5 |
 
-Use process-wide OS peak RSS from `summary.json` for the headline memory value.
-One-second samples provide approximate phase attribution. Do not add all rows
-of `objects.csv` to estimate peak memory: different rows can describe the same
-objects at different stages. Serialized ciphertext/message sizes describe
-storage or communication payload; they are not process memory measurements or
-measured network throughput.
+These are dependency depths, not the number of Q primes consumed. The invariant
+BGV multiplications in this implementation preserve levels. Additions, plaintext
+multiplications, rotations, and key switching contribute noise too; depth alone
+cannot determine a sufficient modulus. Every selected file has `Q mod t = t-1`
+to keep the invariant multiplication scale factor one.
 
-## Packing and the 300 GB machine
+Final refresh runs after echo, before majority selection, on both component
+totals (2*C ciphertexts). Tree uses interval 0; sequential uses interval T=5,
+which suppresses intermediate callbacks. No additional refresh boundary or
+change to the mathematical tally relation is introduced.
 
-With `w=max(b,k)` and `R=2^LogN`, the two-row packing gives:
+Packing width is `max(b,k)` with two BGV rows. For N=32768, width 5 packs 6,552
+voters per ciphertext; width 100 packs 326. At 100k, that is 16 versus 307 blocks.
+At N=16384, width 100 packs 162 voters; 50k needs 309 blocks. Larger k therefore
+costs many more ciphertexts and rotations despite unchanged depth. Reducing k
+to 50 at N=32768 would pack 654 voters, or 153 blocks at 100k, approximately
+halving block-based work. k=100 remains the chosen second set; compact noise
+screens are not full-electorate runtime or memory measurements.
 
-```text
-V = 2 * floor((R/2)/w)    voters per ciphertext
-C = ceil(n/V)            ciphertext blocks per grid period
-```
+## Parameters and validation
 
-The table generator records these values. The active period has three packed
-accumulators: candidate inputs, delegation inputs, and a shared mask. Together
-they contain `3*C` ciphertexts. A fresh set is initialized for each period,
-so `3*T*C` ciphertexts are created over
-the full run, but they are not all retained simultaneously.
+See `experiments/B3_PARAMETER_VALIDATION.md` for exact selected budgets,
+noise-screen outcomes, security assumptions, rejected candidates, and limitations.
+The new 1M plaintext modulus is 1,179,649, greater than n*qmax and compatible
+with full batching at N=32768. The old modulus 786,433 cannot cover one million.
+Parameter JSONs contain exact decimal-string Q/P primes and version information;
+Go records a canonical parameter identifier in every run's metadata.
 
-At period close, sequential echo updates its current effective choices and
-running totals. Tree echo keeps completed affine segments `(a,b,c,d)` and
-merges a segment as soon as its final period arrives, preserving the old
-midpoint split. It retains O(log T) segments, each with up to `4*C` ciphertext
-components per candidate/delegation channel (leaf components share pointers).
-There are still `T-1` tree merges per channel/block and no repeated prefix-tally
-calculation. Final refresh and sequential intermediate-refresh boundaries are
-unchanged. Input additions remain sequential.
+The synthetic screen uses a copied source tree, compact encrypted aggregates,
+and residual-noise amplification for target packing occupancy and cross-block
+reductions. It requires all enabled plaintext checks and at least 20 bits at
+recorded noise checkpoints. This is empirical stress evidence, not a formal
+worst-case noise bound or a complete independent-encryption full-election test.
+The prototype uses ordinary refresh error noise; deployment flooding and complete
+protocol security are outside these checks.
 
-For `n=500000`, `b=k=5`, and the selected no-refresh profile, `V=6552` and
-`C=77`. The active period's three accumulators contain 231 degree-one
-ciphertexts: approximately **1.21 GB (1.13 GiB) of polynomial coefficients**.
-The table separates active period accumulators from total allocations across
-periods. This is not peak process memory: echo state, evaluation keys, encrypted
-weights, temporaries, and garbage collection require more memory. In particular,
-the later weight phase precomputes 6,552 full-level target-mask plaintexts for
-this layout (approximately 17.2 GB of coefficients).
+## Results and reproducibility
 
-The target machine has 300 GB RAM. No 500,000-voter peak RSS has been measured
-for the redesigned campaign. Run launchers one at a time and keep Go runtime
-settings consistent and recorded when comparing modes. The scripts do not set
-a memory cap. The historical width-100 memory estimates do not describe this
-`b=k=5` campaign.
+With `--set`, results are written under `experiments/results/<set>/`, in a new
+`n10k-v2-<UTC timestamp>/` directory. Collisions receive a suffix; existing results
+are never overwritten. Each campaign retains `campaign.json`, `executions.csv`,
+`measurements-summary.csv`, and per-run logs/raw CSV/JSON files. Absolute paths in
+archived execution manifests may refer to the experiment host.
 
-## Further work outside this campaign
+`experiments/results/` remains git-ignored as requested. The Rabat archive is
+unchanged. Keep the binary hash, source revision, parameters, metadata, and
+warm-up/measured labels with any exported results. Parameter-validation files
+outside results are separate from runtime measurements.
 
-Remaining work includes repeated and larger fresh-input noise validation,
-measured memory feasibility, deployment refresh-noise analysis, and complete
-serialized communication accounting. Packing-boundary experiments and broader
-parameter searches may help choose faster or smaller profiles later. They are
-not additional configurations silently included in the current 36-case matrix.
-
-## Shared-mask protocol revision
-
-The earlier shared-mask revision used `tally_flow=period-streaming-shared-mask-v2`. Each submission
-adds two payload ciphertexts and one shared mask; each period retains three
-aggregate grids. Commitments remain outside the implementation. The parameter
-files under `aligned-final/` were screened for this revised flow. Earlier
-results and validation reports remain historical; the current parameter table
-uses the new security estimates and synthetic checks.
-
-Regular evaluation workloads now use nonzero one-hot candidate and delegation
-choices in every period, generated with `randomVotingVector` for both components.
-They exclude zero-vote scenarios. This changes the workload distribution from
-earlier runs (including delegation majorities), without changing the encrypted
-tally operations or FHE parameters. The synthetic screen supports an explicit missing-submission carry pattern
-in addition to concentrated, balanced, and random workloads. The sampled benchmark now uses distinct freshly encrypted inputs in its measured period.
-
-## Fresh-input benchmark revision
-
-Rebuild for new runs. `execution_mode=sampled-fresh-input-benchmark` distinguishes
-new runs from historical zero-fixture benchmarks. Input encoding/encryption is
-recorded under `4.1-simulated-client-input-preparation`; only server aggregation
-is projected from the measured sample to n*T. Echo still closes all T periods,
-and final refresh remains after echo. Final plaintext verification models the
-first-period sample and later missing submissions. The experiment matrix and
-parameter files are unchanged. Existing results, figures, and parameter screens
-remain historical evidence; no large fresh-input benchmark was run for this edit.
-
-## Masked-input echo revision
-
-Both modes now compute `current*(1-mask) + aggregatedInput*mask`. Gate
-multiplications execute for candidates and delegates at every period close,
-including the first period and periods with no submissions. Tree leaves store
-the gated payload in both b and d. This adds 2*C*T ciphertext multiplications;
-the existing parameter files have not been retuned. See
-[MASKED_ECHO_UPDATE.md](experiments/MASKED_ECHO_UPDATE.md) for validation.
+Existing plotting scripts describe historical b=k=5 data and should not be used
+to mix the two new shapes without adapting their dimension checks and captions.
+No historical plotted values are replaced by the new matrices.

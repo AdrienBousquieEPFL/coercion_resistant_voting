@@ -15,7 +15,7 @@ def main():
     with matrix.open() as f:
         reader=csv.DictReader(f); fields=reader.fieldnames; rows=list(reader)
     for row in rows:
-        if row['parameter_file'].startswith('parameters/aligned-final/'):
+        if row['parameter_file']:
             path=root/row['parameter_file']
             command=[str(args.binary.resolve()),'--describe-parameters',f"--n={row['n']}",f'--parameter-file={path.resolve()}']
             concrete=json.loads(subprocess.check_output(command,text=True))

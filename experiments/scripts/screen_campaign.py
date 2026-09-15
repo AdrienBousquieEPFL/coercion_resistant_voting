@@ -11,9 +11,9 @@ import time
 
 from run_campaign import ROOT,PROJECT,stop_process
 
-def families():
+def families(matrix=ROOT/'experiments.csv'):
     grouped={}
-    with (ROOT/'experiments.csv').open() as f:
+    with matrix.open() as f:
         for row in csv.DictReader(f):
             key=(row['parameter_file'],row['b'],row['k'],row['strategy'])
             if key not in grouped or int(row['n'])>int(grouped[key]['n']): grouped[key]=row
@@ -22,6 +22,7 @@ def families():
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary',required=True,type=Path)
+    parser.add_argument('--matrix',type=Path,default=ROOT/'experiments.csv')
     parser.add_argument('--repeats',type=int,default=20)
     parser.add_argument('--output-root',type=Path,default=ROOT/'validation')
     parser.add_argument('--strategy',action='append',default=[])
@@ -31,7 +32,7 @@ def main():
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()
     if args.repeats<1 or args.timeout<=0: parser.error('repeats and timeout must be positive')
-    cases=[r for r in families() if (not args.strategy or r['strategy'] in args.strategy) and (not args.shape or f"{r['b']},{r['k']}" in args.shape)]
+    cases=[r for r in families(args.matrix) if (not args.strategy or r['strategy'] in args.strategy) and (not args.shape or f"{r['b']},{r['k']}" in args.shape)]
     if args.parameter_file:
         candidate=args.parameter_file.resolve()
         for row in cases:row['parameter_file']=str(candidate.relative_to(ROOT))

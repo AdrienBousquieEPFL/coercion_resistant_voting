@@ -178,8 +178,8 @@ var rec *metricsRecorder
 // ParametersLiteral is only constructed during the BGV setup phase.
 func InitMetrics(meta runMeta) {
 	now := time.Now()
-	runID := fmt.Sprintf("%s_n%d_b%d_k%d_T%d",
-		now.Format("20060102_150405"), meta.N, meta.B, meta.K, meta.T)
+	runID := fmt.Sprintf("%s_n%s_b%d_k%d_T%d",
+		now.Format("20060102_150405"), experimentCountLabel(meta.N), meta.B, meta.K, meta.T)
 	outputRoot := meta.OutputRoot
 	if outputRoot == "" {
 		outputRoot = "runs"
@@ -968,4 +968,16 @@ func timeMultiparty(name string) func() {
 			Notes: "whole local multiparty protocol, including party and coordinator work; no network latency; overlaps containing phases",
 		})
 	}
+}
+
+// experimentCountLabel abbreviates exact thousands/millions in artifact names.
+// Metadata retains the integer voter count.
+func experimentCountLabel(n int) string {
+	if n >= 1000000 && n%1000000 == 0 {
+		return fmt.Sprintf("%dM", n/1000000)
+	}
+	if n >= 1000 && n%1000 == 0 {
+		return fmt.Sprintf("%dk", n/1000)
+	}
+	return fmt.Sprintf("%d", n)
 }

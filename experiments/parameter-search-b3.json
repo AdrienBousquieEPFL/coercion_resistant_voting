@@ -1,0 +1,708 @@
+[
+  {
+    "file": "experiments/parameters/b3-k100/sequential-final-100k.json",
+    "k": 100,
+    "n": 100000,
+    "exit_code": 0,
+    "seconds": 14.407979624986183,
+    "min_margin": 82.184311,
+    "passed": true,
+    "command": [
+      "/private/tmp/voting-campaign-screen-feyqg4pu/screen",
+      "--n=101",
+      "--b=3",
+      "--k=100",
+      "--T=5",
+      "--N=3",
+      "--qmax=1",
+      "--echo-mode=sequential",
+      "--refresh-mode=collective",
+      "--echo-refresh-interval=5",
+      "--parameter-file=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/parameters/b3-k100/sequential-final-100k.json",
+      "--screen-target-n=100000",
+      "--screen-workload=carry",
+      "--workload-seed=b3-probe-0",
+      "--output-root=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/raw",
+      "--noise-check",
+      "--noise-margin-min=20",
+      "--progress=false"
+    ],
+    "log": "/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/b3-k100-sequential-final-100k-k100.log",
+    "parameters": {
+      "schema_version": 1,
+      "name": "b3-k100-sequential-final-100k",
+      "lattigo_version": "v6.2.0",
+      "logN": 15,
+      "Q": [
+        "1152921504606584833",
+        "1152921504598720513",
+        "1152921504597016577",
+        "1152921504595968001",
+        "1152921504595640321",
+        "1152915725052936193"
+      ],
+      "P": [
+        "1152921504593412097",
+        "1152921504592822273"
+      ],
+      "plaintext_modulus": 786433
+    },
+    "parameter_sha256": "d5e2e37fce8bdc8ffa1e6621f3a5ed3fb30723f1b15752841388719a550784bd"
+  },
+  {
+    "file": "experiments/parameters/b3-k100/sequential-final-50k.json",
+    "k": 100,
+    "n": 50000,
+    "exit_code": 0,
+    "seconds": 9.232512791000772,
+    "min_margin": 44.029769,
+    "passed": true,
+    "command": [
+      "/private/tmp/voting-campaign-screen-feyqg4pu/screen",
+      "--n=101",
+      "--b=3",
+      "--k=100",
+      "--T=5",
+      "--N=3",
+      "--qmax=1",
+      "--echo-mode=sequential",
+      "--refresh-mode=collective",
+      "--echo-refresh-interval=5",
+      "--parameter-file=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/parameters/b3-k100/sequential-final-50k.json",
+      "--screen-target-n=50000",
+      "--screen-workload=carry",
+      "--workload-seed=b3-probe-0",
+      "--output-root=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/raw",
+      "--noise-check",
+      "--noise-margin-min=20",
+      "--progress=false"
+    ],
+    "log": "/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/b3-k100-sequential-final-50k-k100.log",
+    "parameters": {
+      "schema_version": 1,
+      "name": "b3-k100-sequential-final-50k",
+      "lattigo_version": "v6.2.0",
+      "logN": 14,
+      "Q": [
+        "281474976546817",
+        "281474976317441",
+        "281474975662081",
+        "281474975563777",
+        "281474975367169",
+        "281352035860481"
+      ],
+      "P": [
+        "36028797017456641"
+      ],
+      "plaintext_modulus": 65537
+    },
+    "parameter_sha256": "d3176151f151e8cea1ab9ee0b3396950de7d35ff7d2f4cdfebfecb9954aacb84"
+  },
+  {
+    "file": "experiments/parameters/b3-k100/sequential-none-100k.json",
+    "k": 100,
+    "n": 100000,
+    "exit_code": 2,
+    "seconds": 34.4268443750334,
+    "min_margin": 15.155783,
+    "passed": false,
+    "command": [
+      "/private/tmp/voting-campaign-screen-feyqg4pu/screen",
+      "--n=101",
+      "--b=3",
+      "--k=100",
+      "--T=5",
+      "--N=3",
+      "--qmax=1",
+      "--echo-mode=sequential",
+      "--refresh-mode=none",
+      "--echo-refresh-interval=0",
+      "--parameter-file=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/parameters/b3-k100/sequential-none-100k.json",
+      "--screen-target-n=100000",
+      "--screen-workload=carry",
+      "--workload-seed=b3-probe-0",
+      "--output-root=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/raw",
+      "--noise-check",
+      "--noise-margin-min=20",
+      "--progress=false"
+    ],
+    "log": "/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/b3-k100-sequential-none-100k-k100.log",
+    "parameters": {
+      "schema_version": 1,
+      "name": "b3-k100-sequential-none-100k",
+      "lattigo_version": "v6.2.0",
+      "logN": 15,
+      "Q": [
+        "1152921504606584833",
+        "1152921504598720513",
+        "1152921504597016577",
+        "1152921504595968001",
+        "1152921504595640321",
+        "1152921504593412097",
+        "1152921504592822273",
+        "1152920905565470721"
+      ],
+      "P": [
+        "2305843009211662337"
+      ],
+      "plaintext_modulus": 786433
+    },
+    "parameter_sha256": "a9b4e311c174981cb607551100259d3f7e82a036e16a7fc0236b9a1530d3380b"
+  },
+  {
+    "file": "experiments/parameters/b3-k100/sequential-none-50k.json",
+    "k": 100,
+    "n": 50000,
+    "exit_code": 2,
+    "seconds": 33.20470554201165,
+    "min_margin": 1.48085,
+    "passed": false,
+    "command": [
+      "/private/tmp/voting-campaign-screen-feyqg4pu/screen",
+      "--n=101",
+      "--b=3",
+      "--k=100",
+      "--T=5",
+      "--N=3",
+      "--qmax=1",
+      "--echo-mode=sequential",
+      "--refresh-mode=none",
+      "--echo-refresh-interval=0",
+      "--parameter-file=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/parameters/b3-k100/sequential-none-50k.json",
+      "--screen-target-n=50000",
+      "--screen-workload=carry",
+      "--workload-seed=b3-probe-0",
+      "--output-root=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/raw",
+      "--noise-check",
+      "--noise-margin-min=20",
+      "--progress=false"
+    ],
+    "log": "/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/b3-k100-sequential-none-50k-k100.log",
+    "parameters": {
+      "schema_version": 1,
+      "name": "b3-k100-sequential-none-50k",
+      "lattigo_version": "v6.2.0",
+      "logN": 15,
+      "Q": [
+        "4503599626321921",
+        "4503599625535489",
+        "4503599625404417",
+        "4503599623045121",
+        "4503599621472257",
+        "4503599619112961",
+        "4503599618260993",
+        "4503563393630209"
+      ],
+      "P": [
+        "2305843009211662337"
+      ],
+      "plaintext_modulus": 65537
+    },
+    "parameter_sha256": "61319416618d043915c70ebade5d0d350baf77cc6c51b2948a6b6a46146cf0ee"
+  },
+  {
+    "file": "experiments/parameters/b3-k100/tree-final-100k.json",
+    "k": 100,
+    "n": 100000,
+    "exit_code": 0,
+    "seconds": 15.235686792002525,
+    "min_margin": 82.000892,
+    "passed": true,
+    "command": [
+      "/private/tmp/voting-campaign-screen-feyqg4pu/screen",
+      "--n=101",
+      "--b=3",
+      "--k=100",
+      "--T=5",
+      "--N=3",
+      "--qmax=1",
+      "--echo-mode=tree",
+      "--refresh-mode=collective",
+      "--echo-refresh-interval=0",
+      "--parameter-file=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/parameters/b3-k100/tree-final-100k.json",
+      "--screen-target-n=100000",
+      "--screen-workload=carry",
+      "--workload-seed=b3-probe-0",
+      "--output-root=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/raw",
+      "--noise-check",
+      "--noise-margin-min=20",
+      "--progress=false"
+    ],
+    "log": "/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/b3-k100-tree-final-100k-k100.log",
+    "parameters": {
+      "schema_version": 1,
+      "name": "b3-k100-tree-final-100k",
+      "lattigo_version": "v6.2.0",
+      "logN": 15,
+      "Q": [
+        "1152921504606584833",
+        "1152921504598720513",
+        "1152921504597016577",
+        "1152921504595968001",
+        "1152921504595640321",
+        "1152915725052936193"
+      ],
+      "P": [
+        "1152921504593412097",
+        "1152921504592822273"
+      ],
+      "plaintext_modulus": 786433
+    },
+    "parameter_sha256": "b67895b8657721b0141a32b55606685360e099c953e8740fe27aad01103ce8c2"
+  },
+  {
+    "file": "experiments/parameters/b3-k100/tree-final-50k.json",
+    "k": 100,
+    "n": 50000,
+    "exit_code": 0,
+    "seconds": 10.01304487499874,
+    "min_margin": 44.533486,
+    "passed": true,
+    "command": [
+      "/private/tmp/voting-campaign-screen-feyqg4pu/screen",
+      "--n=101",
+      "--b=3",
+      "--k=100",
+      "--T=5",
+      "--N=3",
+      "--qmax=1",
+      "--echo-mode=tree",
+      "--refresh-mode=collective",
+      "--echo-refresh-interval=0",
+      "--parameter-file=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/parameters/b3-k100/tree-final-50k.json",
+      "--screen-target-n=50000",
+      "--screen-workload=carry",
+      "--workload-seed=b3-probe-0",
+      "--output-root=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/raw",
+      "--noise-check",
+      "--noise-margin-min=20",
+      "--progress=false"
+    ],
+    "log": "/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/b3-k100-tree-final-50k-k100.log",
+    "parameters": {
+      "schema_version": 1,
+      "name": "b3-k100-tree-final-50k",
+      "lattigo_version": "v6.2.0",
+      "logN": 14,
+      "Q": [
+        "281474976546817",
+        "281474976317441",
+        "281474975662081",
+        "281474975563777",
+        "281474975367169",
+        "281352035860481"
+      ],
+      "P": [
+        "36028797017456641"
+      ],
+      "plaintext_modulus": 65537
+    },
+    "parameter_sha256": "3869adfbf3d5e314f73c39d0cdfbc4c053a8af6d54b01670c7034e113ef34c83"
+  },
+  {
+    "file": "experiments/parameters/b3-k100/tree-none-100k.json",
+    "k": 100,
+    "n": 100000,
+    "exit_code": 0,
+    "seconds": 36.85719945904566,
+    "min_margin": 49.372974,
+    "passed": true,
+    "command": [
+      "/private/tmp/voting-campaign-screen-feyqg4pu/screen",
+      "--n=101",
+      "--b=3",
+      "--k=100",
+      "--T=5",
+      "--N=3",
+      "--qmax=1",
+      "--echo-mode=tree",
+      "--refresh-mode=none",
+      "--echo-refresh-interval=0",
+      "--parameter-file=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/parameters/b3-k100/tree-none-100k.json",
+      "--screen-target-n=100000",
+      "--screen-workload=carry",
+      "--workload-seed=b3-probe-0",
+      "--output-root=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/raw",
+      "--noise-check",
+      "--noise-margin-min=20",
+      "--progress=false"
+    ],
+    "log": "/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/b3-k100-tree-none-100k-k100.log",
+    "parameters": {
+      "schema_version": 1,
+      "name": "b3-k100-tree-none-100k",
+      "lattigo_version": "v6.2.0",
+      "logN": 15,
+      "Q": [
+        "1152921504606584833",
+        "1152921504598720513",
+        "1152921504597016577",
+        "1152921504595968001",
+        "1152921504595640321",
+        "1152921504593412097",
+        "1152921504592822273",
+        "1152920905565470721"
+      ],
+      "P": [
+        "2305843009211662337"
+      ],
+      "plaintext_modulus": 786433
+    },
+    "parameter_sha256": "f6c069fb7a65fa8a95c1d8c1b5eee06b7262870170bbc6084514c523fe3081f1"
+  },
+  {
+    "file": "experiments/parameters/b3-k100/tree-none-50k.json",
+    "k": 100,
+    "n": 50000,
+    "exit_code": 2,
+    "seconds": 41.79453025001567,
+    "min_margin": 0.208899,
+    "passed": false,
+    "command": [
+      "/private/tmp/voting-campaign-screen-feyqg4pu/screen",
+      "--n=101",
+      "--b=3",
+      "--k=100",
+      "--T=5",
+      "--N=3",
+      "--qmax=1",
+      "--echo-mode=tree",
+      "--refresh-mode=none",
+      "--echo-refresh-interval=0",
+      "--parameter-file=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/parameters/b3-k100/tree-none-50k.json",
+      "--screen-target-n=50000",
+      "--screen-workload=carry",
+      "--workload-seed=b3-probe-0",
+      "--output-root=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/raw",
+      "--noise-check",
+      "--noise-margin-min=20",
+      "--progress=false"
+    ],
+    "log": "/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/b3-k100-tree-none-50k-k100.log",
+    "parameters": {
+      "schema_version": 1,
+      "name": "b3-k100-tree-none-50k",
+      "lattigo_version": "v6.2.0",
+      "logN": 15,
+      "Q": [
+        "281474976317441",
+        "281474975662081",
+        "281474974482433",
+        "281474972188673",
+        "281474971926529",
+        "281474971533313",
+        "281474966880257",
+        "281463735255041"
+      ],
+      "P": [
+        "2305843009211662337"
+      ],
+      "plaintext_modulus": 65537
+    },
+    "parameter_sha256": "0338887a785812dfb1db14522f30806c09bca8ebab8272a795acf5583225249e"
+  },
+  {
+    "file": "experiments/parameters/b3-k5/sequential-final-1M.json",
+    "k": 5,
+    "n": 1000000,
+    "exit_code": 0,
+    "seconds": 8.787164916982874,
+    "min_margin": 136.175971,
+    "passed": true,
+    "command": [
+      "/private/tmp/voting-campaign-screen-feyqg4pu/screen",
+      "--n=6",
+      "--b=3",
+      "--k=5",
+      "--T=5",
+      "--N=3",
+      "--qmax=1",
+      "--echo-mode=sequential",
+      "--refresh-mode=collective",
+      "--echo-refresh-interval=5",
+      "--parameter-file=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/parameters/b3-k5/sequential-final-1M.json",
+      "--screen-target-n=1000000",
+      "--screen-workload=carry",
+      "--workload-seed=b3-probe-0",
+      "--output-root=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/raw",
+      "--noise-check",
+      "--noise-margin-min=20",
+      "--progress=false"
+    ],
+    "log": "/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/b3-k5-sequential-final-1M-k5.log",
+    "parameters": {
+      "schema_version": 1,
+      "name": "b3-k5-sequential-final-1M",
+      "lattigo_version": "v6.2.0",
+      "logN": 15,
+      "Q": [
+        "1152921504606584833",
+        "1152921504598720513",
+        "1152921504597016577",
+        "1152921504595968001",
+        "1152921504595640321",
+        "1152921504593412097",
+        "1152920485035442177"
+      ],
+      "P": [
+        "1152921504592822273",
+        "1152921504592429057"
+      ],
+      "plaintext_modulus": 1179649
+    },
+    "parameter_sha256": "7e4bdf658b1f6f539221cd52da0ea2421f66a3561c05e77fa6b22d4cd1938cfc"
+  },
+  {
+    "file": "experiments/parameters/b3-k5/sequential-none-1M.json",
+    "k": 5,
+    "n": 1000000,
+    "exit_code": 0,
+    "seconds": 19.27644520800095,
+    "min_margin": 63.33811,
+    "passed": true,
+    "command": [
+      "/private/tmp/voting-campaign-screen-feyqg4pu/screen",
+      "--n=6",
+      "--b=3",
+      "--k=5",
+      "--T=5",
+      "--N=3",
+      "--qmax=1",
+      "--echo-mode=sequential",
+      "--refresh-mode=none",
+      "--echo-refresh-interval=0",
+      "--parameter-file=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/parameters/b3-k5/sequential-none-1M.json",
+      "--screen-target-n=1000000",
+      "--screen-workload=carry",
+      "--workload-seed=b3-probe-0",
+      "--output-root=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/raw",
+      "--noise-check",
+      "--noise-margin-min=20",
+      "--progress=false"
+    ],
+    "log": "/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/b3-k5-sequential-none-1M-k5.log",
+    "parameters": {
+      "schema_version": 1,
+      "name": "b3-k5-sequential-none-1M",
+      "lattigo_version": "v6.2.0",
+      "logN": 15,
+      "Q": [
+        "1152921504606584833",
+        "1152921504598720513",
+        "1152921504597016577",
+        "1152921504595968001",
+        "1152921504595640321",
+        "1152921504593412097",
+        "1152921504592822273",
+        "1152921504592429057",
+        "1152917494056681473"
+      ],
+      "P": [
+        "2305843009211662337"
+      ],
+      "plaintext_modulus": 1179649
+    },
+    "parameter_sha256": "094c3aaca9c18126b681b54a0f545b1b067853b6666988f9f64ca3821b1dc756"
+  },
+  {
+    "file": "experiments/parameters/aligned-final/sequential-none-t65537.json",
+    "k": 5,
+    "n": 50000,
+    "exit_code": 2,
+    "seconds": 19.008870832971297,
+    "min_margin": 1.595215,
+    "passed": false,
+    "command": [
+      "/private/tmp/voting-campaign-screen-feyqg4pu/screen",
+      "--n=6",
+      "--b=3",
+      "--k=5",
+      "--T=5",
+      "--N=3",
+      "--qmax=1",
+      "--echo-mode=sequential",
+      "--refresh-mode=none",
+      "--echo-refresh-interval=0",
+      "--parameter-file=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/parameters/aligned-final/sequential-none-t65537.json",
+      "--screen-target-n=50000",
+      "--screen-workload=carry",
+      "--workload-seed=b3-probe-0",
+      "--output-root=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/raw",
+      "--noise-check",
+      "--noise-margin-min=20",
+      "--progress=false"
+    ],
+    "log": "/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/aligned-final-sequential-none-t65537-k5.log",
+    "parameters": {
+      "schema_version": 1,
+      "name": "sequential-none-t65537",
+      "lattigo_version": "v6.2.0",
+      "logN": 15,
+      "Q": [
+        "4503599626321921",
+        "4503599625535489",
+        "4503599625404417",
+        "4503599623045121",
+        "4503599621472257",
+        "4503599619112961",
+        "4503599618260993",
+        "4503563393630209"
+      ],
+      "P": [
+        "2305843009211662337"
+      ],
+      "plaintext_modulus": 65537
+    },
+    "parameter_sha256": "38141562a4b97ba5693989637ac8592483c1a3c63726265e8532fab0b633b64b"
+  },
+  {
+    "file": "experiments/parameters/aligned-final/sequential-none-t786433.json",
+    "k": 5,
+    "n": 500000,
+    "exit_code": 2,
+    "seconds": 21.108182583004236,
+    "min_margin": 12.836376,
+    "passed": false,
+    "command": [
+      "/private/tmp/voting-campaign-screen-feyqg4pu/screen",
+      "--n=6",
+      "--b=3",
+      "--k=5",
+      "--T=5",
+      "--N=3",
+      "--qmax=1",
+      "--echo-mode=sequential",
+      "--refresh-mode=none",
+      "--echo-refresh-interval=0",
+      "--parameter-file=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/parameters/aligned-final/sequential-none-t786433.json",
+      "--screen-target-n=500000",
+      "--screen-workload=carry",
+      "--workload-seed=b3-probe-0",
+      "--output-root=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/raw",
+      "--noise-check",
+      "--noise-margin-min=20",
+      "--progress=false"
+    ],
+    "log": "/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/aligned-final-sequential-none-t786433-k5.log",
+    "parameters": {
+      "schema_version": 1,
+      "name": "sequential-none-t786433",
+      "lattigo_version": "v6.2.0",
+      "logN": 15,
+      "Q": [
+        "1152921504606584833",
+        "1152921504598720513",
+        "1152921504597016577",
+        "1152921504595968001",
+        "1152921504595640321",
+        "1152921504593412097",
+        "1152921504592822273",
+        "1152920905565470721"
+      ],
+      "P": [
+        "2305843009211662337"
+      ],
+      "plaintext_modulus": 786433
+    },
+    "parameter_sha256": "adebdb759cb9415fcdee0042366e822989e05ed1afe196369694bfa98968d04f"
+  },
+  {
+    "file": "experiments/parameters/aligned-final/sequential-final-t65537.json",
+    "k": 5,
+    "n": 50000,
+    "exit_code": 0,
+    "seconds": 19.33945433300687,
+    "min_margin": 48.429709,
+    "passed": true,
+    "command": [
+      "/private/tmp/voting-campaign-screen-feyqg4pu/screen",
+      "--n=6",
+      "--b=3",
+      "--k=5",
+      "--T=5",
+      "--N=3",
+      "--qmax=1",
+      "--echo-mode=sequential",
+      "--refresh-mode=collective",
+      "--echo-refresh-interval=5",
+      "--parameter-file=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/parameters/aligned-final/sequential-final-t65537.json",
+      "--screen-target-n=50000",
+      "--screen-workload=carry",
+      "--workload-seed=b3-probe-0",
+      "--output-root=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/raw",
+      "--noise-check",
+      "--noise-margin-min=20",
+      "--progress=false"
+    ],
+    "log": "/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/aligned-final-sequential-final-t65537-k5.log",
+    "parameters": {
+      "schema_version": 1,
+      "name": "sequential-final-t65537",
+      "lattigo_version": "v6.2.0",
+      "logN": 14,
+      "Q": [
+        "281474976546817",
+        "281474976317441",
+        "281474975662081",
+        "281474975563777",
+        "281474975367169",
+        "281352035860481"
+      ],
+      "P": [
+        "36028797017456641"
+      ],
+      "plaintext_modulus": 65537
+    },
+    "parameter_sha256": "75cc5949bab5a54eb3e528d02be6bc2d5113f63ef9cd39a65a7ccaea60b00cc8"
+  },
+  {
+    "file": "experiments/parameters/aligned-final/sequential-final-t786433.json",
+    "k": 5,
+    "n": 500000,
+    "exit_code": 0,
+    "seconds": 10.7580608749995,
+    "min_margin": 83.263938,
+    "passed": true,
+    "command": [
+      "/private/tmp/voting-campaign-screen-feyqg4pu/screen",
+      "--n=6",
+      "--b=3",
+      "--k=5",
+      "--T=5",
+      "--N=3",
+      "--qmax=1",
+      "--echo-mode=sequential",
+      "--refresh-mode=collective",
+      "--echo-refresh-interval=5",
+      "--parameter-file=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/parameters/aligned-final/sequential-final-t786433.json",
+      "--screen-target-n=500000",
+      "--screen-workload=carry",
+      "--workload-seed=b3-probe-0",
+      "--output-root=/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/raw",
+      "--noise-check",
+      "--noise-margin-min=20",
+      "--progress=false"
+    ],
+    "log": "/Users/mariana/voting-benchmarks/coercion_resistant_voting/experiments/validation/b3-campaigns/aligned-final-sequential-final-t786433-k5.log",
+    "parameters": {
+      "schema_version": 1,
+      "name": "sequential-final-t786433",
+      "lattigo_version": "v6.2.0",
+      "logN": 15,
+      "Q": [
+        "1152921504606584833",
+        "1152921504598720513",
+        "1152921504597016577",
+        "1152921504595968001",
+        "1152921504595640321",
+        "1152915725052936193"
+      ],
+      "P": [
+        "1152921504593412097",
+        "1152921504592822273"
+      ],
+      "plaintext_modulus": 786433
+    },
+    "parameter_sha256": "0e8beb36811147d2c4921b90838c3527866e662a2675c5e2be59ead0dd6208b0"
+  }
+]

@@ -284,12 +284,13 @@ that requires more than one ciphertext.
 
 ## Runtime experiment campaign
 
-The 36-configuration campaign, exact-prime parameter files, per-`n` launchers,
-and parameter-screening workflow are documented in
-[`EXPERIMENTS.md`](EXPERIMENTS.md). Benchmark ingestion starts at
-`n=10000` and covers all voters for one period, with `T=5` downstream.
-The current scope is `b=k=5`: both no-refresh modes at every selected voter
-count, plus tree and sequential final-refresh cases only at 10,000 and 50,000.
+Two experiment sets are documented in [`EXPERIMENTS.md`](EXPERIMENTS.md):
+`b3-k5` has sequential with/without final refresh through `n=1M` (20 cases);
+`b3-k100` has tree and sequential with/without final refresh through `n=100k`
+(32 cases). Both use `T=5`, three parties, and `qmax=1`. Select a set with
+`--set b3-k5` or `--set b3-k100`. Benchmark ingestion starts at `n=10k` and
+covers all voters for one input period, with five periods of echo.
+See the parameter-validation status in the experiment guide before starting.
 
 Use `--parameter-file=<file>` for a concrete versioned profile,
 `--workload-seed=<seed>` to repeat simulated inputs, and `--output-root=<dir>`
