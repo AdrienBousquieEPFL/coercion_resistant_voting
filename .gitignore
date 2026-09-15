@@ -35,3 +35,14 @@ __pycache__/
 # Editor and OS files
 .idea/
 .DS_Store
+
+# Selected measurement data from the Rabat v2 campaigns.
+!/experiments/results/rabat_v2/*/campaign.json
+!/experiments/results/rabat_v2/*/executions.csv
+!/experiments/results/rabat_v2/*/measurements-summary.csv
+!/experiments/results/rabat_v2/*/raw/*/meta.json
+!/experiments/results/rabat_v2/*/raw/*/summary.json
+!/experiments/results/rabat_v2/*/raw/*/phases.csv
+!/experiments/results/rabat_v2/*/raw/*/components.csv
+!/experiments/results/rabat_v2/*/raw/*/ops.csv
+!/experiments/results/rabat_v2/*/raw/*/objects.csv

@@ -1,0 +1,43 @@
+{
+  "n": 500,
+  "warmups": 1,
+  "repeats": 3,
+  "timeout_seconds": 0,
+  "binary": "/home/mbotelho/coercion_resistant_voting/bin/voting-experiments",
+  "binary_sha256": "0a73e664a2f254d85e8593fd99725d7c238dc81d1b79fe36d692f134fa94727a",
+  "encryption_randomness": "fresh-unseeded",
+  "configurations": [
+    {
+      "experiment_id": "n500-b5-k5-tree-none",
+      "n": "500",
+      "b": "5",
+      "k": "5",
+      "T": "5",
+      "qmax": "1",
+      "parties": "3",
+      "strategy": "tree-none",
+      "echo_mode": "tree",
+      "refresh_mode": "none",
+      "refresh_interval": "0",
+      "execution_mode": "fresh",
+      "sample_voters": "0",
+      "parameter_file": "parameters/aligned-final/tree-none-t65537.json"
+    },
+    {
+      "experiment_id": "n500-b5-k5-sequential-none",
+      "n": "500",
+      "b": "5",
+      "k": "5",
+      "T": "5",
+      "qmax": "1",
+      "parties": "3",
+      "strategy": "sequential-none",
+      "echo_mode": "sequential",
+      "refresh_mode": "none",
+      "refresh_interval": "0",
+      "execution_mode": "fresh",
+      "sample_voters": "0",
+      "parameter_file": "parameters/aligned-final/sequential-none-t65537.json"
+    }
+  ]
+}

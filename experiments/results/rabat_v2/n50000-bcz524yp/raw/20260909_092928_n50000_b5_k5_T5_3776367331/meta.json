@@ -1,0 +1,46 @@
+{
+  "tally_flow": "period-streaming-shared-mask-v2",
+  "parameter_profile": "sequential-final-t65537",
+  "parameter_id": "280b30ac4ba12742d6f6fc903f54352a70dd4b0188627fbf3d62115a88c42d06",
+  "workload_seed": "v1-n50000-b5-k5-measured-0",
+  "encryption_randomness": "fresh-unseeded",
+  "noise_checks": false,
+  "run_id": "20260909_092928_n50000_b5_k5_T5_3776367331",
+  "started_at": "2026-09-09T09:29:28+02:00",
+  "n": 50000,
+  "b": 5,
+  "k": 5,
+  "T": 5,
+  "echo_mode": "sequential",
+  "refresh_mode": "collective",
+  "echo_refresh_interval": 5,
+  "diagnostic_checks": "final",
+  "execution_mode": "sampled-server-benchmark",
+  "benchmark_sample_voters": 50000,
+  "metrics_sample_interval_ms": 1000,
+  "bgv": {
+    "logN": 14,
+    "Q": [
+      281474976546817,
+      281474976317441,
+      281474975662081,
+      281474975563777,
+      281474975367169,
+      281352035860481
+    ],
+    "P": [
+      36028797017456641
+    ],
+    "logQ_bits": 288,
+    "logP_bits": 55,
+    "logQP_bits": 343,
+    "q_limbs": 6,
+    "plaintext_modulus": 65537,
+    "secret_dist": "Ternary(p=0.6667)",
+    "error_dist": "DiscreteGaussian(sigma=3.2, bound=19.2)"
+  },
+  "git_sha": "2cf2c5147dc3a0d169b31a4cd4aba9766f2b456b",
+  "hostname": "lovelace",
+  "go_version": "go1.26.1",
+  "num_cpu": 96
+}

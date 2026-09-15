@@ -1,0 +1,34 @@
+name,count,each_bytes,total_mib,notes
+D_matrix,10000,40,0.381,n rows of k uint64 (one-hot)
+q_vector,1,80000,0.076,flat n uint64 voting power
+rlk,1,11011024,10.501,
+galois_keys,48,11011040,504.045,
+galois_elements,48,8,0.000,uint64 indices fed to GenGaloisKeysNew
+qExtCiphertexts,4,1573262,6.002,each_bytes is mean across slice
+qBaseCiphertexts,4,1573262,6.002,each_bytes is mean across slice
+benchmarkInputFixtures,1,1573262,1.500,each_bytes is mean across slice
+candidatePeriodInputs/p0,4,1573262,6.002,each_bytes is mean across slice
+sharedMaskCiphertexts/p0,4,1573262,6.002,each_bytes is mean across slice
+delegationPeriodInputs/p0,4,1573262,6.002,each_bytes is mean across slice
+candidatePeriodInputs/p1,4,1573262,6.002,each_bytes is mean across slice
+sharedMaskCiphertexts/p1,4,1573262,6.002,each_bytes is mean across slice
+delegationPeriodInputs/p1,4,1573262,6.002,each_bytes is mean across slice
+candidatePeriodInputs/p2,4,1573262,6.002,each_bytes is mean across slice
+sharedMaskCiphertexts/p2,4,1573262,6.002,each_bytes is mean across slice
+delegationPeriodInputs/p2,4,1573262,6.002,each_bytes is mean across slice
+candidatePeriodInputs/p3,4,1573262,6.002,each_bytes is mean across slice
+sharedMaskCiphertexts/p3,4,1573262,6.002,each_bytes is mean across slice
+delegationPeriodInputs/p3,4,1573262,6.002,each_bytes is mean across slice
+candidatePeriodInputs/p4,4,1573262,6.002,each_bytes is mean across slice
+sharedMaskCiphertexts/p4,4,1573262,6.002,each_bytes is mean across slice
+delegationPeriodInputs/p4,4,1573262,6.002,each_bytes is mean across slice
+sampled_input_ciphertexts,30000,1573262,45011.387,benchmark sample count only; not a communication estimate
+vCiphertexts,4,1573262,6.002,each_bytes is mean across slice
+dCiphertexts,4,1573262,6.002,each_bytes is mean across slice
+dWeighted,4,1573262,6.002,each_bytes is mean across slice
+ctDelegateSupport,1,1573262,1.500,each_bytes is mean across slice
+dTildeCiphertexts,4,1573262,6.002,each_bytes is mean across slice
+dwCiphertexts,4,1573262,6.002,each_bytes is mean across slice
+voterWeightCiphertexts,4,1573262,6.002,each_bytes is mean across slice
+voterWeightExpanded,4,1573262,6.002,each_bytes is mean across slice
+ctResult,1,1573262,1.500,each_bytes is mean across slice

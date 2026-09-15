@@ -1,0 +1,47 @@
+{
+  "tally_flow": "period-streaming-shared-mask-v2",
+  "parameter_profile": "sequential-none-t65537",
+  "parameter_id": "b6d32fd776351a6027da236e563922da498bf63e403203fc0a96688b1faba823",
+  "workload_seed": "v1-n500-b5-k5-measured-0",
+  "encryption_randomness": "fresh-unseeded",
+  "noise_checks": false,
+  "run_id": "20260908_195310_n500_b5_k5_T5_2848748583",
+  "started_at": "2026-09-08T19:53:10+02:00",
+  "n": 500,
+  "b": 5,
+  "k": 5,
+  "T": 5,
+  "echo_mode": "sequential",
+  "refresh_mode": "none",
+  "echo_refresh_interval": 0,
+  "diagnostic_checks": "final",
+  "execution_mode": "fresh",
+  "metrics_sample_interval_ms": 1000,
+  "bgv": {
+    "logN": 15,
+    "Q": [
+      4503599626321921,
+      4503599625535489,
+      4503599625404417,
+      4503599623045121,
+      4503599621472257,
+      4503599619112961,
+      4503599618260993,
+      4503563393630209
+    ],
+    "P": [
+      2305843009211662337
+    ],
+    "logQ_bits": 416,
+    "logP_bits": 61,
+    "logQP_bits": 477,
+    "q_limbs": 8,
+    "plaintext_modulus": 65537,
+    "secret_dist": "Ternary(p=0.6667)",
+    "error_dist": "DiscreteGaussian(sigma=3.2, bound=19.2)"
+  },
+  "git_sha": "2cf2c5147dc3a0d169b31a4cd4aba9766f2b456b",
+  "hostname": "lovelace",
+  "go_version": "go1.26.1",
+  "num_cpu": 96
+}

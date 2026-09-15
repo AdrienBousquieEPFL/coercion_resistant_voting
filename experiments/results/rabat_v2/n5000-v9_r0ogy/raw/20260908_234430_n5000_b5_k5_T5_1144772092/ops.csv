@@ -1,0 +1,36 @@
+phase,op,count
+3-pre-election-weight-input-preparation,Encode,2
+3-pre-election-weight-input-preparation,EncryptNew,1
+3-pre-election-weight-input-preparation,MulNew,1
+4.1-streamed-input-reception-and-aggregation,Add,75000
+4.1-streamed-input-reception-and-aggregation,Encode,75005
+4.1-streamed-input-reception-and-aggregation,EncryptNew,75015
+4.2-tally-periodic-echo-tree,AddNew,42
+4.2-tally-periodic-echo-tree,MulNew,10
+4.2-tally-periodic-echo-tree,MulRelinNew,32
+4.3-tally-lagrange-indicator,Add (poly-est),10
+4.3-tally-lagrange-indicator,MulRelinNew (poly-est),10
+4.3-tally-lagrange-indicator,PolyEvaluate,2
+4.4-tally-delegate-support,AddNew,1
+4.4-tally-delegate-support,Encode,1
+4.4-tally-delegate-support,MulNew,1
+4.4-tally-delegate-support,MulRelinNew,1
+4.4-tally-delegate-support,RotateAndAdd,1
+4.4-tally-delegate-support,RotateRowsNew,1
+4.5-tally-dTilde,AddNew,1
+4.5-tally-dTilde,MulNew,1
+4.5-tally-dTilde,MulRelinNew,1
+4.5-tally-dTilde,RotateAndAdd,1
+4.6-tally-Dw+dTilde,Add,5
+4.6-tally-Dw+dTilde,AddNew,1
+4.6-tally-Dw+dTilde,Encode,5000
+4.6-tally-Dw+dTilde,MulNew,5
+4.6-tally-Dw+dTilde,RotateColumnsNew,5
+4.7-tally-vote-weight-product,Add,4
+4.7-tally-vote-weight-product,AddNew,1
+4.7-tally-vote-weight-product,MulRelinNew,1
+4.7-tally-vote-weight-product,RotateAndAdd,1
+4.7-tally-vote-weight-product,RotateColumnsNew,4
+4.7-tally-vote-weight-product,RotateRowsNew,1
+5-threshold-decrypt-verify,Decode,1
+5-threshold-decrypt-verify,DecryptNew,1

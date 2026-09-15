@@ -1,0 +1,9 @@
+name,count,each_bytes,total_mib,notes
+D_matrix,100000,40,3.815,n rows of k uint64 (one-hot)
+q_vector,1,800000,0.763,flat n uint64 voting power
+rlk,1,37750288,36.001,
+galois_keys,50,37750304,1800.075,
+galois_elements,50,8,0.000,uint64 indices fed to GenGaloisKeysNew
+qExtCiphertexts,16,4194734,64.007,each_bytes is mean across slice
+qBaseCiphertexts,16,4194734,64.007,each_bytes is mean across slice
+benchmarkInputFixtures,1,4194734,4.000,each_bytes is mean across slice
