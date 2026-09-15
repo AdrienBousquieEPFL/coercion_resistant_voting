@@ -284,7 +284,7 @@ that requires more than one ciphertext.
 
 ## Runtime experiment campaign
 
-The 22-configuration campaign, exact-prime parameter files, per-`n` launchers,
+The 36-configuration campaign, exact-prime parameter files, per-`n` launchers,
 and parameter-screening workflow are documented in
 [`EXPERIMENTS.md`](EXPERIMENTS.md). Benchmark ingestion starts at
 `n=10000` and covers all voters for one period, with `T=5` downstream.

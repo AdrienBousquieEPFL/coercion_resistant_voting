@@ -1,6 +1,6 @@
 # Tally experiment campaign
 
-This document describes the current 22-configuration runtime campaign for the
+This document describes the current 36-configuration runtime campaign for the
 Go/Lattigo tally. Its purpose is to compare server runtime, memory, and refresh
 cost across election sizes and echo strategies. ZK proof generation and
 verification are outside this campaign.
@@ -18,19 +18,19 @@ Lattigo v6.2.0. Candidate and delegation votes share one encrypted voter-period 
 
 | Voters `n` | Input execution | Strategies | Cases |
 |---:|---|---|---:|
-| 200 | Fresh, five periods | Tree/no-refresh; sequential/no-refresh | 2 |
-| 500 | Fresh, five periods | Tree/no-refresh; sequential/no-refresh | 2 |
-| 1,000 | Fresh, five periods | Tree/no-refresh; sequential/no-refresh | 2 |
-| 5,000 | Fresh, five periods | Tree/no-refresh; sequential/no-refresh | 2 |
+| 200 | Fresh, five periods | Both no-refresh modes; tree and sequential final refresh | 4 |
+| 500 | Fresh, five periods | Both no-refresh modes; tree and sequential final refresh | 4 |
+| 1,000 | Fresh, five periods | Both no-refresh modes; tree and sequential final refresh | 4 |
+| 5,000 | Fresh, five periods | Both no-refresh modes; tree and sequential final refresh | 4 |
 | 10,000 | Benchmark, one input period | Both no-refresh modes; tree and sequential final refresh | 4 |
-| 25,000 | Benchmark, one input period | Tree/no-refresh; sequential/no-refresh | 2 |
+| 25,000 | Benchmark, one input period | Both no-refresh modes; tree and sequential final refresh | 4 |
 | 50,000 | Benchmark, one input period | Both no-refresh modes; tree and sequential final refresh | 4 |
-| 100,000 | Benchmark, one input period | Tree/no-refresh; sequential/no-refresh | 2 |
-| 500,000 | Benchmark, one input period | Tree/no-refresh; sequential/no-refresh | 2 |
-| **Total** | | | **22** |
+| 100,000 | Benchmark, one input period | Both no-refresh modes; tree and sequential final refresh | 4 |
+| 500,000 | Benchmark, one input period | Both no-refresh modes; tree and sequential final refresh | 4 |
+| **Total** | | | **36** |
 
 There are nine tree/no-refresh cases, nine sequential/no-refresh cases, and
-four final-refresh comparisons (two tree, two sequential). Other `(b,k)` shapes
+18 final-refresh comparisons (nine tree, nine sequential). Other `(b,k)` shapes
 and all intermediate refresh intervals are outside this campaign. The old 75-case
 campaign and its validation reports are historical; its raw results are retained.
 
@@ -68,8 +68,7 @@ Each runtime records the concrete parameter identifier.
 
 Each echo/refresh family has a separate file for each plaintext modulus. The
 two refreshed families share the same numerical parameters within each voter
-range. The campaign still runs refresh only at 10,000 and 50,000; files for
-other voter counts are available without adding runtime configurations.
+range. The campaign runs both final-refresh modes at all nine voter counts.
 
 Refresh means one boundary **after the completed echo**, refreshing `2*C`
 ciphertexts. Tree uses interval 0; sequential uses interval T=5, which disables
@@ -139,7 +138,7 @@ done
 
 Defaults are one warm-up plus three measured executions for n<10000, and
 one warm-up plus one measured execution for n>=10000. Each execution uses a
-fresh process: 60 process executions for the complete 22-case campaign.
+fresh process: 104 process executions for the complete 36-case campaign.
 Explicit `--repeats` overrides the measured-run count. A single measurement
 provides no estimate of run-to-run variation.
 Warm-ups are excluded from summaries. Workload seeds match across strategies
@@ -270,7 +269,7 @@ Remaining work includes repeated and larger fresh-input noise validation,
 measured memory feasibility, deployment refresh-noise analysis, and complete
 serialized communication accounting. Packing-boundary experiments and broader
 parameter searches may help choose faster or smaller profiles later. They are
-not additional configurations silently included in the current 22-case matrix.
+not additional configurations silently included in the current 36-case matrix.
 
 ## Shared-mask protocol revision
 
