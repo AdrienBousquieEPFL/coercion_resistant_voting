@@ -63,6 +63,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--n',required=True,type=parse_count)
     parser.add_argument('--set', dest='experiment_set', choices=['b3-k5','b3-k100'], help='select one experiment set')
+    parser.add_argument('--parameter-file', type=Path, help='override parameters for a single selected configuration; path relative to current directory')
     parser.add_argument('--binary',type=Path,default=PROJECT/'bin'/'voting-experiments')
     parser.add_argument('--output-root',type=Path,default=ROOT/'results')
     parser.add_argument('--warmups',type=int,default=1)
@@ -77,6 +78,13 @@ def main():
     if args.warmups<1 or args.repeats<1 or args.timeout<0: parser.error('use at least one warm-up and one repetition; timeout must be nonnegative')
     rows=selected_rows(args.n,args.strategy,args.shape,args.experiment_set)
     if not rows: parser.error('no configurations match the filters')
+    if args.parameter_file is not None:
+        if len(rows) != 1:
+            parser.error('--parameter-file requires a single configuration; select --set and --strategy')
+        parameter_file=args.parameter_file.resolve()
+        if not parameter_file.is_file():
+            parser.error(f'missing parameter file: {parameter_file}')
+        rows=[dict(rows[0], parameter_file=str(parameter_file))]
     binary=args.binary.resolve()
     for row in rows:
         if not row['parameter_file'] or not (ROOT/row['parameter_file']).is_file(): parser.error(f"missing concrete parameters for {row['experiment_id']}")

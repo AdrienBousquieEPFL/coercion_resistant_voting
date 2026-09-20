@@ -165,6 +165,78 @@ unchanged. Keep the binary hash, source revision, parameters, metadata, and
 warm-up/measured labels with any exported results. Parameter-validation files
 outside results are separate from runtime measurements.
 
-Existing plotting scripts describe historical b=k=5 data and should not be used
-to mix the two new shapes without adapting their dimension checks and captions.
-No historical plotted values are replaced by the new matrices.
+Generate runtime (seconds and minutes) and peak-memory plots for the completed
+`b3-k100` runs through 100k from the project directory:
+
+```bash
+python3 experiments/scripts/plot_results.py --set b3-k100
+```
+
+This reads `experiments/results/b3-k100/` and writes PNG, SVG, PDF, plotted-data
+CSVs and provenance JSON to `experiments/figures/b3-k100/`. It requires matplotlib.
+Separate strategy campaigns are combined automatically; only passed measured
+runs are included. Incomplete sets are supported, and warm-ups are excluded.
+No `measurements-summary.csv` is required. Repeating the command replaces the
+plots in that output directory; raw results are untouched.
+
+For copied results or a different graph destination, use explicit paths:
+
+```bash
+python3 experiments/scripts/plot_results.py --set b3-k100 \
+  --results /path/to/b3-k100 --output /path/to/new-figures
+```
+
+The input directory must contain the individual campaign directories. Use
+`--hostname lovelace` (or the recorded machine name) if filtering a mixed-machine
+archive. To combine results from machines with the same configuration, use:
+
+```bash
+python3 experiments/scripts/plot_results.py --set b3-k5 --allow-mixed-hosts
+```
+
+This pools runs by strategy and voter count, retaining hostnames in the plotted
+run CSV and provenance JSON. Graphs show combined series without host labels. Machine equivalence is supplied by
+the user, not verified by the script. Mixed revisions, dimensions, or parameter profiles at the same plotted
+point are rejected to avoid combining incompatible runs.
+
+Use `--set b3-k5` for the first set, including 1M. Axis bounds and dimension
+captions follow the loaded data. Historical b=k=5 results remain supported using
+explicit `--results` and `--output` paths without `--set`.
+
+### Combined sequential figures
+
+```bash
+python experiments/scripts/plot_results.py --set combined --allow-mixed-hosts
+```
+
+Reads `experiments/results/b3-k5/` and `experiments/results/b3-k100/`, and writes
+combined runtime and memory figures to `experiments/figures/combined/`. Only
+sequential strategies are plotted for these sets, including when plotted separately.
+For `--set combined`, an explicit `--results` points to the parent of both set directories.
+Legends identify k and refresh; runtime projections use open points and dashed
+lines. Memory is observed and uses filled points and solid lines. Titles, shading
+and footnotes are omitted, both axes use logarithmic scales, and the upper y-axis bound is explicitly labelled.
+
+Each runtime graph annotates the highest median point of every line with the
+corresponding time in hours, using the line colour. The memory graph retains memory units.
+
+### Run the optional smaller-ring refresh profiles
+
+The runner accepts `--parameter-file` for a single selected configuration. Paths
+are relative to the current directory. The override is recorded in the campaign
+manifest; the default matrices remain unchanged. From the project directory:
+
+```bash
+for n in 100k 500k 1M; do
+  profile=100k-500k
+  if [ "$n" = 1M ]; then profile=1M; fi
+  ./experiments/scripts/run_n${n}.sh --set b3-k5 --strategy sequential-final \
+    --parameter-file experiments/parameters/b3-k5/smaller-refresh/sequential-final-${profile}.json \
+    --output-root experiments/results/smaller-refresh || break
+done
+```
+
+These runs retain one warm-up and one measured run each. Results go under
+`experiments/results/smaller-refresh/b3-k5/`. Keep them separate from the original
+profiles: the plotter rejects mixed parameter IDs at the same strategy/n point.
+Add `--dry-run` to inspect commands without running FHE experiments.
