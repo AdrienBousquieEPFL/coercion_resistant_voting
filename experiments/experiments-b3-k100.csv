@@ -31,3 +31,7 @@ n100k-b3-k100-tree-none,100000,3,100,5,1,3,tree-none,tree,none,0,benchmark,10000
 n100k-b3-k100-tree-final,100000,3,100,5,1,3,tree-final,tree,collective,0,benchmark,100000,parameters/b3-k100/tree-final-100k.json
 n100k-b3-k100-sequential-none,100000,3,100,5,1,3,sequential-none,sequential,none,0,benchmark,100000,parameters/b3-k100/sequential-none-100k.json
 n100k-b3-k100-sequential-final,100000,3,100,5,1,3,sequential-final,sequential,collective,5,benchmark,100000,parameters/b3-k100/sequential-final-100k.json
+n500k-b3-k100-tree-none,500000,3,100,5,1,3,tree-none,tree,none,0,benchmark,500000,parameters/b3-k100/tree-none-100k.json
+n500k-b3-k100-tree-final,500000,3,100,5,1,3,tree-final,tree,collective,0,benchmark,500000,parameters/b3-k100/tree-final-100k.json
+n500k-b3-k100-sequential-none,500000,3,100,5,1,3,sequential-none,sequential,none,0,benchmark,500000,parameters/b3-k100/sequential-none-100k.json
+n500k-b3-k100-sequential-final,500000,3,100,5,1,3,sequential-final,sequential,collective,5,benchmark,500000,parameters/b3-k100/sequential-final-100k.json
