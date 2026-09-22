@@ -1,6 +1,6 @@
 # Rerun the revised sequential parameter profiles
 
-These standalone matrices select only the five newly requested configurations.
+These standalone matrices select seven revised configurations.
 They do not modify the original matrices or regenerate earlier measurements.
 
 | Set | n | Strategy | N | Q bits | QP bits | t |
@@ -8,13 +8,15 @@ They do not modify the original matrices or regenerate earlier measurements.
 | b3-k5-revised | 1M | sequential-none | 32768 | 495 | 556 | 1179649 |
 | b3-k100-revised | 100k, 500k | sequential-none | 32768 | 480 | 541 | 786433 |
 | b3-k100-revised | 100k, 500k | sequential-final | 16384 | 312 | 342 | 786433 |
+| b3-k100-revised | 1M | sequential-none | 32768 | 495 | 556 | 1179649 |
+| b3-k100-revised | 1M | sequential-final | 16384 | 312 | 342 | 1179649 |
 
 All use b=3, T=5, three parties, one warm-up and one measured run. Fresh input
 aggregation is sampled for n voter-period submissions and projected to five
 periods, as in the existing campaigns. Every included run verifies its final
 tally. No-refresh profiles accept lower synthetic noise margins; these are not
 worst-case correctness guarantees. See LOW_MARGIN_1M.md, LOW_MARGIN_K100.md and
-K100_PROFILE_REVIEW.md and their corresponding JSON evidence files.
+K100_PROFILE_REVIEW.md, K100_1M_VALIDATION.md and their corresponding JSON evidence files.
 
 ## Files to commit
 
@@ -27,6 +29,7 @@ git add -- \
   experiments/experiments-b3-k5-revised.csv \
   experiments/experiments-b3-k100-revised.csv \
   experiments/parameters/b3-k5/sequential-none-1M-low-margin.json \
+  experiments/parameters/b3-k5/smaller-refresh/sequential-final-1M.json \
   experiments/parameters/b3-k100/sequential-none-100k-500k-low-margin.json \
   experiments/parameters/b3-k100/sequential-final-100k-500k-smaller-ring.json \
   experiments/REVISED_PARAMETER_RUNS.md
@@ -38,7 +41,8 @@ Also commit the compact validation evidence for reproducibility:
 git add -- \
   experiments/LOW_MARGIN_1M.md experiments/low-margin-1M-validation.json \
   experiments/LOW_MARGIN_K100.md experiments/low-margin-k100-validation.json \
-  experiments/K100_PROFILE_REVIEW.md experiments/k100-profile-review.json
+  experiments/K100_PROFILE_REVIEW.md experiments/k100-profile-review.json \
+  experiments/K100_1M_VALIDATION.md experiments/k100-1M-validation.json
 ```
 
 Inspect the complete staged diff (including anything already staged):
@@ -46,7 +50,7 @@ Inspect the complete staged diff (including anything already staged):
 ```bash
 git diff --cached --stat
 git diff --cached
-git commit -m "Add revised parameter rerun campaigns through 500k for k100"
+git commit -m "Add revised parameter rerun campaigns through 1M for k100"
 git push
 ```
 
@@ -82,6 +86,27 @@ To run modes independently, use `--strategy sequential-none` or
 ```bash
 ./experiments/scripts/run_n500k.sh --set b3-k100-revised --strategy sequential-final
 ```
+
+## k100: 1M, on separate computers
+
+The existing k5 parameter files are intentionally reused: their exact profiles
+passed the k100 synthetic checks. No parameter generation is required.
+
+On the computer assigned the no-refresh run:
+
+```bash
+./experiments/scripts/run_n1M.sh --set b3-k100-revised --strategy sequential-none
+```
+
+On the computer assigned the refresh run:
+
+```bash
+./experiments/scripts/run_n1M.sh --set b3-k100-revised --strategy sequential-final
+```
+
+Each command performs one full warm-up followed by one measured run. Both verify
+the final tally. The 1M runtime and peak memory have not yet been measured; the
+compact synthetic validation does not establish full-scale memory requirements.
 
 ## k5: 1M, no refresh, separately
 

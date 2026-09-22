@@ -3,3 +3,5 @@ n100k-b3-k100-sequential-none,100000,3,100,5,1,3,sequential-none,sequential,none
 n100k-b3-k100-sequential-final,100000,3,100,5,1,3,sequential-final,sequential,collective,5,benchmark,100000,parameters/b3-k100/sequential-final-100k-500k-smaller-ring.json
 n500k-b3-k100-sequential-none,500000,3,100,5,1,3,sequential-none,sequential,none,0,benchmark,500000,parameters/b3-k100/sequential-none-100k-500k-low-margin.json
 n500k-b3-k100-sequential-final,500000,3,100,5,1,3,sequential-final,sequential,collective,5,benchmark,500000,parameters/b3-k100/sequential-final-100k-500k-smaller-ring.json
+n1M-b3-k100-sequential-none,1000000,3,100,5,1,3,sequential-none,sequential,none,0,benchmark,1000000,parameters/b3-k5/sequential-none-1M-low-margin.json
+n1M-b3-k100-sequential-final,1000000,3,100,5,1,3,sequential-final,sequential,collective,5,benchmark,1000000,parameters/b3-k5/smaller-refresh/sequential-final-1M.json
