@@ -62,7 +62,7 @@ def parse_count(value):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--n',required=True,type=parse_count)
-    parser.add_argument('--set', dest='experiment_set', choices=['b3-k5','b3-k100'], help='select one experiment set')
+    parser.add_argument('--set', dest='experiment_set', choices=['b3-k5','b3-k100','b3-k5-revised','b3-k100-revised'], help='select one experiment set')
     parser.add_argument('--parameter-file', type=Path, help='override parameters for a single selected configuration; path relative to current directory')
     parser.add_argument('--binary',type=Path,default=PROJECT/'bin'/'voting-experiments')
     parser.add_argument('--output-root',type=Path,default=ROOT/'results')

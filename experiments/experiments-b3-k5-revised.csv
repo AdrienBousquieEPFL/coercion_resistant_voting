@@ -1,0 +1,2 @@
+experiment_id,n,b,k,T,qmax,parties,strategy,echo_mode,refresh_mode,refresh_interval,execution_mode,sample_voters,parameter_file
+n1M-b3-k5-sequential-none,1000000,3,5,5,1,3,sequential-none,sequential,none,0,benchmark,1000000,parameters/b3-k5/sequential-none-1M-low-margin.json
